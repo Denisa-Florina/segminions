@@ -14,7 +14,11 @@ def create_app():
     app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
     
 
-    CORS(app, supports_credentials=True)
+    app.config['SESSION_COOKIE_SAMESITE'] = 'None' 
+    app.config['SESSION_COOKIE_SECURE'] = False   
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+
+    CORS(app, supports_credentials=True, origins=["http://localhost:3000"])
     
 
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)

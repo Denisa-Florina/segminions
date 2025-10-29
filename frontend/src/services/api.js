@@ -16,10 +16,10 @@ const api = axios.create({
 
 api.interceptors.request.use(
   (config) => {
-    // Putem adauga un token
-    // if (token) {
-    //   config.headers.Authorization = `Bearer ${token}`;
-    // }
+    const token = localStorage.getItem('authToken');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
     return config;
   },
   (error) => {
@@ -36,7 +36,7 @@ api.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response;
       
-      if (status === 401) {
+      if (status === 401 && window.location.pathname !== '/login') {
         window.location.href = '/login';
       } else if (status === 404) {
         console.error('Resource not found:', data.error);
