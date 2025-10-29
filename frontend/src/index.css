@@ -290,3 +290,6 @@
   box-shadow: 0 6px 12px rgba(0,0,0,0.1);
 }
 
+.patients-container {
+  background: linear-gradient(to bottom right, #ebf8ff, #e0e7ff);
+}
