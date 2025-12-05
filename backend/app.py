@@ -16,7 +16,7 @@ def create_app():
     allowed_origins = [
         "http://localhost:3000",
         "http://localhost:3001",
-        os.environ.get('FRONTEND_URL', '') 
+        os.environ.get('FRONTEND_URL', 'https://medsegai.web.app/') 
     ]
     
     CORS(app, 
