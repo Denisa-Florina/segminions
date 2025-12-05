@@ -1,18 +1,15 @@
 import axios from 'axios';
 
-// Base API URL - change for production
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
-
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:5001/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000, 
+  timeout: 30000,
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json'
   }
 });
-
 
 api.interceptors.request.use(
   (config) => {
@@ -22,34 +19,23 @@ api.interceptors.request.use(
     }
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
-
 api.interceptors.response.use(
-  (response) => {
-    return response;
-  },
+  (response) => response,
   (error) => {
     if (error.response) {
       const { status, data } = error.response;
       
       if (status === 401 && window.location.pathname !== '/login') {
+        localStorage.removeItem('authToken');
         window.location.href = '/login';
-      } else if (status === 404) {
-        console.error('Resource not found:', data.error);
-      } else if (status === 500) {
-        console.error('Server error:', data.error);
       }
       
       return Promise.reject(new Error(data.error || 'An error occurred'));
-    } else if (error.request) {
-      return Promise.reject(new Error('No response from server'));
-    } else {
-      return Promise.reject(error);
     }
+    return Promise.reject(new Error('No response from server'));
   }
 );
 

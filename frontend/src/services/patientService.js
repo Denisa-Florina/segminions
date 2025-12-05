@@ -1,19 +1,16 @@
 import api from './api';
 
 export const patientService = {
-  
   async getPatients(doctorId) {
     const response = await api.get(`/patients?doctor_id=${doctorId}`);
     return response.data.patients;
   },
 
-  
   async getPatient(patientId) {
     const response = await api.get(`/patients/${patientId}`);
     return response.data.patient;
   },
 
-  
   async createPatient(patientData, dicomFile, doctorId) {
     const formData = new FormData();
     formData.append('name', patientData.name);
@@ -30,18 +27,28 @@ export const patientService = {
     return response.data.patient;
   },
 
-  
   async updatePatient(patientId, updates) {
     const response = await api.put(`/patients/${patientId}`, updates);
     return response.data.patient;
   },
 
-  
   async deletePatient(patientId) {
     await api.delete(`/patients/${patientId}`);
   },
 
- 
+  async uploadDicom(patientId, dicomFile) {
+    const formData = new FormData();
+    formData.append('dicom_file', dicomFile);
+
+    const response = await api.post(`/patients/${patientId}/upload-dicom`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+    
+    return response.data.result;
+  },
+
   async reSegmentPatient(patientId) {
     const response = await api.post(`/patients/${patientId}/re-segment`);
     return response.data.patient;
