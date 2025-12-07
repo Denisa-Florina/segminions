@@ -3,6 +3,11 @@ from flask_cors import CORS
 import os
 import sys
 
+from services.firebaseService import firebase_service
+from datetime import datetime
+import hashlib
+
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 def create_app():
@@ -38,7 +43,8 @@ def create_app():
     @app.route('/api/health')
     def health_check():
         return {'status': 'healthy', 'message': 'MedSeg AI Backend is running'}, 200
-    
+
+
     return app
 
 app = create_app()

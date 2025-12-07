@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify, session
 from backend.services.authService import AuthService
+from backend.services.firebaseService import firebase_service
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
@@ -16,10 +17,10 @@ def login():
         password = data['password']
         
         doctor, error = AuthService.authenticate_doctor(email, password)
-        
         if error:
             return jsonify({'error': error}), 401
         
+        # Store doctor info in session
         session['doctor_id'] = doctor['id']
         session['doctor_email'] = doctor['email']
         
@@ -27,7 +28,7 @@ def login():
             'message': 'Login successful',
             'doctor': doctor
         }), 200
-        
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -36,14 +37,12 @@ def login():
 def logout():
     try:
         doctor_id = session.get('doctor_id')
-        
         if doctor_id:
             AuthService.logout_doctor(doctor_id)
         
         session.clear()
-        
         return jsonify({'message': 'Logout successful'}), 200
-        
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -52,20 +51,17 @@ def logout():
 def get_current_doctor():
     try:
         doctor_id = session.get('doctor_id')
-        
         if not doctor_id:
             return jsonify({'error': 'Not authenticated'}), 401
         
-        from backend.data.database import db
-        
-        doctor = next((d for d in db.doctors if d['id'] == doctor_id), None)
-        
+        # Fetch doctor from Firebase
+        doctor = firebase_service.get_doctor_by_id(doctor_id)
         if not doctor:
             return jsonify({'error': 'Doctor not found'}), 404
         
+        # Remove password from response
         safe_doctor = {k: v for k, v in doctor.items() if k != 'password'}
-        
         return jsonify({'doctor': safe_doctor}), 200
-        
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500

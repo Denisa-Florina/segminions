@@ -1,18 +1,17 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
 from backend.services.segmentationService import segmentation_service
-from backend.data.database import db
-from datetime import datetime
+from backend.services.firebaseService import firebase_service
+import io
 
 patient_bp = Blueprint('patients', __name__, url_prefix='/api/patients')
 
 @patient_bp.route('/', methods=['GET'])
 def get_patients():
     doctor_id = request.args.get('doctor_id', type=int)
-    
     if not doctor_id:
         return jsonify({'error': 'doctor_id is required'}), 400
     
-    patients = db.get_patients_by_doctor(doctor_id)
+    patients = firebase_service.get_patients_by_doctor(doctor_id)
     
     transformed_patients = []
     for p in patients:
@@ -28,10 +27,9 @@ def get_patients():
     
     return jsonify({'patients': transformed_patients}), 200
 
-@patient_bp.route('/<int:patient_id>', methods=['GET'])
+@patient_bp.route('/<patient_id>', methods=['GET'])
 def get_patient(patient_id):
-    patient = db.get_patient_by_id(patient_id)
-    
+    patient = firebase_service.get_patient_by_id(patient_id)
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
     
@@ -54,13 +52,9 @@ def create_patient():
         name = request.form.get('name')
         age = request.form.get('age', type=int)
         doctor_id = request.form.get('doctor_id', type=int)
+        dicom_file = request.files.get('dicom_file')
         
-        if 'dicom_file' not in request.files:
-            return jsonify({'error': 'No DICOM file uploaded'}), 400
-        
-        dicom_file = request.files['dicom_file']
-        
-        if not all([name, age, doctor_id]):
+        if not all([name, age, doctor_id, dicom_file]):
             return jsonify({'error': 'Missing required fields'}), 400
         
         patient_data = {'name': name, 'age': age}
@@ -80,19 +74,17 @@ def create_patient():
             'message': 'Patient created successfully',
             'patient': transformed_patient
         }), 201
-        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@patient_bp.route('/<int:patient_id>/upload-dicom', methods=['POST'])
+@patient_bp.route('/<patient_id>/upload-dicom', methods=['POST'])
 def upload_dicom(patient_id):
     try:
-        if 'dicom_file' not in request.files:
+        dicom_file = request.files.get('dicom_file')
+        if not dicom_file:
             return jsonify({'error': 'No DICOM file uploaded'}), 400
         
-        dicom_file = request.files['dicom_file']
-        
-        patient = db.get_patient_by_id(patient_id)
+        patient = firebase_service.get_patient_by_id(patient_id)
         if not patient:
             return jsonify({'error': 'Patient not found'}), 404
         
@@ -102,23 +94,20 @@ def upload_dicom(patient_id):
             'message': 'DICOM uploaded and processed successfully',
             'result': result
         }), 200
-        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@patient_bp.route('/<int:patient_id>', methods=['PUT'])
+@patient_bp.route('/<patient_id>', methods=['PUT'])
 def update_patient(patient_id):
     try:
         data = request.get_json()
-        
         if not data:
             return jsonify({'error': 'No data provided'}), 400
         
         allowed_fields = {'name', 'age'}
         updates = {k: v for k, v in data.items() if k in allowed_fields}
         
-        patient = db.update_patient(patient_id, updates)
-        
+        patient = firebase_service.update_patient(patient_id, updates)
         if not patient:
             return jsonify({'error': 'Patient not found'}), 404
         
@@ -126,30 +115,25 @@ def update_patient(patient_id):
             'message': 'Patient updated successfully',
             'patient': patient
         }), 200
-        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@patient_bp.route('/<int:patient_id>', methods=['DELETE'])
+@patient_bp.route('/<patient_id>', methods=['DELETE'])
 def delete_patient(patient_id):
     try:
-        patient = db.get_patient_by_id(patient_id)
-        
+        patient = firebase_service.get_patient_by_id(patient_id)
         if not patient:
             return jsonify({'error': 'Patient not found'}), 404
         
-        db.delete_patient(patient_id)
-        
+        firebase_service.delete_patient(patient_id)
         return jsonify({'message': 'Patient deleted successfully'}), 200
-        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@patient_bp.route('/<int:patient_id>/re-segment', methods=['POST'])
+@patient_bp.route('/<patient_id>/re-segment', methods=['POST'])
 def re_segment_patient(patient_id):
     try:
         patient = segmentation_service.re_segment(patient_id)
-        
         if not patient:
             return jsonify({'error': 'Patient not found'}), 404
         
@@ -157,6 +141,22 @@ def re_segment_patient(patient_id):
             'message': 'Re-segmentation completed',
             'patient': patient
         }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@patient_bp.route('/<patient_id>/download', methods=['GET'])
+def download_patient_file(patient_id):
+    try:
+        file_info = firebase_service.get_file_from_patient(patient_id)
+        if not file_info:
+            return jsonify({'error': 'File not found'}), 404
         
+        file_data = io.BytesIO(file_info['data'])
+        return send_file(
+            file_data,
+            mimetype='application/gzip',
+            as_attachment=True,
+            download_name=file_info['filename']
+        )
     except Exception as e:
         return jsonify({'error': str(e)}), 500
