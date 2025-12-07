@@ -1,43 +1,80 @@
 import numpy as np
 import time
 from datetime import datetime
-from backend.data.database import db
-import os
+from backend.services.firebaseService import firebase_service
+import io
 
 class SegmentationService:
     def __init__(self):
         self.model_loaded = True
 
     def process_dicom(self, dicom_file, patient_data, doctor_id):
-        """Process initial DICOM file when creating a patient"""
+        """Process initial DICOM/NIFTI file when creating a patient"""
         time.sleep(0.5)
         
-        filename = self._save_dicom_file(dicom_file)
+        filename = dicom_file.filename if hasattr(dicom_file, 'filename') else 'scan.nii.gz'
         
+        # Read file size
+        dicom_file.seek(0, 2)  # Seek to end
+        file_size = dicom_file.tell()
+        dicom_file.seek(0)  # Reset to beginning
+        
+        # Simulate segmentation
         metrics = self._simulate_segmentation()
         
         patient = {
             'name': patient_data['name'],
             'age': patient_data['age'],
-            'dicom_file': filename,
-            'doctor_id': doctor_id,
+            'filename': filename,
+            'file_size': file_size,
+            'doctor_id': str(doctor_id),
             'date': datetime.now().strftime('%Y-%m-%d'),
             'segmented': True,
             'metrics': metrics
         }
         
-        return db.add_patient(patient)
+        # Add patient to Firestore first (without file)
+        from backend.data.database import db
+        created_patient = db.add_patient(patient)
+        
+        if created_patient and 'id' in created_patient:
+            # Now save the file
+            success = firebase_service.save_file_to_patient(
+                created_patient['id'],
+                dicom_file,
+                filename
+            )
+            
+            if not success:
+                print("Warning: File upload failed, but patient was created")
+        
+        return created_patient
 
     def process_uploaded_dicom(self, dicom_file, patient_id):
-        """Process a newly uploaded DICOM file for existing patient"""
+        """Process a newly uploaded DICOM/NIFTI file for existing patient"""
         time.sleep(1.5)
         
-        filename = self._save_dicom_file(dicom_file)
+        filename = dicom_file.filename if hasattr(dicom_file, 'filename') else 'scan.nii.gz'
         
+        # Read file size
+        dicom_file.seek(0, 2)
+        file_size = dicom_file.tell()
+        dicom_file.seek(0)
+        
+        # Save file to patient
+        success = firebase_service.save_file_to_patient(patient_id, dicom_file, filename)
+        
+        if not success:
+            raise Exception("Failed to upload file")
+        
+        # Simulate segmentation
         metrics = self._simulate_segmentation()
         
+        # Update patient with new data
+        from backend.data.database import db
         updates = {
-            'dicom_file': filename,
+            'filename': filename,
+            'file_size': file_size,
             'metrics': metrics,
             'segmented': True,
             'date': datetime.now().strftime('%Y-%m-%d')
@@ -57,6 +94,7 @@ class SegmentationService:
         """Re-run segmentation on existing patient"""
         time.sleep(0.5)
         
+        from backend.data.database import db
         patient = db.get_patient_by_id(patient_id)
         if not patient:
             return None
@@ -64,15 +102,6 @@ class SegmentationService:
         new_metrics = self._simulate_segmentation()
         
         return db.update_patient(patient_id, {'metrics': new_metrics})
-
-    def _save_dicom_file(self, dicom_file):
-        """Save uploaded DICOM file to uploads folder"""
-        if hasattr(dicom_file, 'filename'):
-            filename = f"{int(time.time())}_{dicom_file.filename}"
-            filepath = os.path.join('uploads', filename)
-            dicom_file.save(filepath)
-            return filename
-        return 'mock.dcm'
 
     def _simulate_segmentation(self):
         """Simulate segmentation metrics"""

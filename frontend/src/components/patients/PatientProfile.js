@@ -143,10 +143,15 @@ function PatientProfile({ patient, onBack, onUpdate }) {
                 </p>
               </div>
               <div className="bg-gray-700/50 rounded-lg p-4">
-                <p className="text-sm text-gray-400 mb-1">Fișier DICOM</p>
+                <p className="text-sm text-gray-400 mb-1">Fișier</p>
                 <p className="text-sm font-medium text-white truncate">
-                  {patient.dicomFile || 'N/A'}
+                  {patient.filename || 'N/A'}
                 </p>
+                {patient.file_size && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Size: {(patient.file_size / (1024 * 1024)).toFixed(2)} MB
+                  </p>
+                )}
               </div>
             </div>
           </div>
