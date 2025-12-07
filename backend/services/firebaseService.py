@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 import hashlib
 import base64
+import json
 
 # Initialize Firebase Admin SDK
 service_account_path = os.environ.get(
@@ -12,8 +13,8 @@ service_account_path = os.environ.get(
 )
 
 if not firebase_admin._apps:
-    cred = credentials.Certificate(service_account_path)
-    firebase_admin.initialize_app(cred)
+    service_account_info = json.loads(os.environ["FIREBASE_SERVICE_ACCOUNT_PATH"])
+    cred = credentials.Certificate(service_account_info)
 
 # Get Firestore reference
 db = firestore.client()
