@@ -160,30 +160,3 @@ def re_segment_patient(patient_id):
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-    
-
-@patient_bp.route('/<patient_id>/download', methods=['GET'])
-def download_patient_file(patient_id):
-    """Download patient's NIFTI file"""
-    try:
-        from backend.services.firebaseService import firebase_service
-        from flask import send_file
-        import io
-        
-        file_info = firebase_service.get_file_from_patient(patient_id)
-        
-        if not file_info:
-            return jsonify({'error': 'File not found'}), 404
-        
-        # Create file-like object
-        file_data = io.BytesIO(file_info['data'])
-        
-        return send_file(
-            file_data,
-            mimetype='application/gzip',
-            as_attachment=True,
-            download_name=file_info['filename']
-        )
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
