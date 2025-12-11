@@ -12,12 +12,10 @@ class AuthService:
         if not doctor:
             return None, "Doctor not found"
 
-        # Hash incoming password and compare
         password_hash = hashlib.sha256(password.encode()).hexdigest()
         if doctor.get('password') != password_hash:
             return None, "Invalid password"
 
-        # Remove password before returning
         safe_doctor = {k: v for k, v in doctor.items() if k != 'password'}
         return safe_doctor, None
 

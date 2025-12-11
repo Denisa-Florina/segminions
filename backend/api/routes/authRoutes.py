@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, session, current_app
 from backend.services.authService import AuthService
 from backend.services.firebaseService import firebase_service
 
@@ -17,10 +17,11 @@ def login():
         password = data['password']
         
         doctor, error = AuthService.authenticate_doctor(email, password)
+        current_app.logger.info(f"Received login doctor: {doctor}") 
+        current_app.logger.info(f"Received login id: {doctor['id']}") 
         if error:
             return jsonify({'error': error}), 401
         
-        # Store doctor info in session
         session['doctor_id'] = doctor['id']
         session['doctor_email'] = doctor['email']
         

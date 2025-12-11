@@ -74,7 +74,6 @@ function AddPatientModal({ doctorId, onClose, onSuccess }) {
                 accept=".dcm"
                 onChange={(e) => setDicomFile(e.target.files[0])}
                 className="hidden"
-                required
               />
             </label>
           </div>
