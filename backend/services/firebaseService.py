@@ -21,11 +21,6 @@ db = firestore.client()
 
 
 class FirebaseService:
-    """Service for Firebase Firestore operations (Database only - no Storage)"""
-    
-    # ============================================
-    # DOCTOR OPERATIONS
-    # ============================================
     
     @staticmethod
     def get_doctor_by_email(email):
@@ -80,10 +75,6 @@ class FirebaseService:
             print(f"Error updating doctor: {e}")
             return None
     
-    # ============================================
-    # PATIENT OPERATIONS
-    # ============================================
-    
     @staticmethod
     def add_patient(patient_data):
         """Add a new patient to Firestore"""
@@ -108,12 +99,10 @@ class FirebaseService:
             
             for doc in docs:
                 patient_data = doc.to_dict()
-                
-                # Don't include file_data in list view (too large)
+
                 if 'file_data' in patient_data:
                     patient_data.pop('file_data')
                 
-                # Convert Firestore timestamp to string
                 if 'created_at' in patient_data:
                     patient_data['created_at'] = patient_data['created_at'].isoformat() if hasattr(patient_data['created_at'], 'isoformat') else str(patient_data['created_at'])
                 if 'updated_at' in patient_data:
@@ -170,10 +159,6 @@ class FirebaseService:
         except Exception as e:
             print(f"Error deleting patient: {e}")
             return False
-    
-    # ============================================
-    # FILE OPERATIONS (Base64 in Database)
-    # ============================================
     
     @staticmethod
     def save_file_to_patient(patient_id, file_data, filename):

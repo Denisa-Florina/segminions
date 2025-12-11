@@ -90,8 +90,7 @@ function SettingsView({ doctor, onClose }) {
             Salvează modificări
           </button>
         </div>
-
-        {/* Security Settings */}
+        
         <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
           <h3 className="text-lg font-bold text-white mb-4">Securitate</h3>
           <button className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition">
@@ -99,7 +98,6 @@ function SettingsView({ doctor, onClose }) {
           </button>
         </div>
 
-        {/* Notification Settings */}
         <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
           <h3 className="text-lg font-bold text-white mb-4">Notificări</h3>
           <div className="space-y-3">

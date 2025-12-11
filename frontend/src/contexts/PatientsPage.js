@@ -173,7 +173,6 @@ export default function PatientsPage() {
                 <p><strong>Data scanării:</strong> {p.date}</p>
                 <p><strong>Segmentat:</strong> {p.segmented ? 'Da' : 'Nu'}</p>
 
-                {/* Image with red dot */}
                 {p.dicom_file && (
                   <div className="relative w-64 h-64 border mt-2">
                     <img
