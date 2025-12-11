@@ -2,30 +2,35 @@ import React, { useState } from 'react';
 import { X, Upload } from 'lucide-react';
 import patientService from '../../services/patientService';
 
-function AddPatientModal({ doctorId, onClose, onSuccess }) {
+function AddPatientModal({ onClose, onSuccess }) {
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [dicomFile, setDicomFile] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!name || !age) return;
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  if (!name || !age) return;
 
-    setLoading(true);
-    try {
-      await patientService.createPatient(
-        { name, age: parseInt(age) },
-        dicomFile,
-        doctorId
-      );
-      onSuccess();
-    } catch (err) {
-      alert('Eroare la adăugare pacient: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  setLoading(true);
+  try {
+    
+    const doctor = JSON.parse(localStorage.getItem('doctor'));
+    if (!doctor) throw new Error("Doctor not found in localStorage");
+
+    await patientService.createPatient(
+      { name, age: parseInt(age) },
+      dicomFile,
+      doctor.id 
+    );
+    onSuccess();
+  } catch (err) {
+    alert('Eroare la adăugare pacient: ' + err.message);
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">

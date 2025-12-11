@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file, session
 from backend.services.segmentationService import segmentation_service
 from backend.services.firebaseService import firebase_service
 import io
@@ -7,7 +7,7 @@ patient_bp = Blueprint('patients', __name__, url_prefix='/api/patients')
 
 @patient_bp.route('/', methods=['GET'])
 def get_patients():
-    doctor_id = request.args.get('doctor_id', type=int)
+    doctor_id = session.get('doctor_id')
     if not doctor_id:
         return jsonify({'error': 'doctor_id is required'}), 400
     
@@ -51,7 +51,7 @@ def create_patient():
     try:
         name = request.form.get('name')
         age = request.form.get('age', type=int)
-        doctor_id = request.form.get('doctor_id', type=int)
+        doctor_id = request.form.get('doctor_id')
         dicom_file = request.files.get('dicom_file')
         
         if not all([name, age, doctor_id]):

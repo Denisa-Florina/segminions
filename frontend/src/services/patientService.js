@@ -2,7 +2,7 @@ import api from './api';
 
 export const patientService = {
   async getPatients(doctorId) {
-    const response = await api.get(`/patients?doctor_id=${doctorId}`);
+    const response = await api.get('/patients');
     return response.data.patients;
   },
 
@@ -11,11 +11,14 @@ export const patientService = {
     return response.data.patient;
   },
 
-  async createPatient(patientData, dicomFile, doctorId) {
+  async createPatient(patientData, dicomFile) {
+    const doctor = JSON.parse(localStorage.getItem('doctor'));
+  if (!doctor) throw new Error("Doctor not found in localStorage");
+
     const formData = new FormData();
     formData.append('name', patientData.name);
     formData.append('age', patientData.age);
-    formData.append('doctor_id', doctorId);
+    formData.append('doctor_id', doctor.id);
     formData.append('dicom_file', dicomFile);
 
     const response = await api.post('/patients', formData, {
