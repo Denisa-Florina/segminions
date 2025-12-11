@@ -10,7 +10,7 @@ function AddPatientModal({ doctorId, onClose, onSuccess }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!name || !age || !dicomFile) return;
+    if (!name || !age) return;
 
     setLoading(true);
     try {
@@ -89,7 +89,7 @@ function AddPatientModal({ doctorId, onClose, onSuccess }) {
             </button>
             <button
               type="submit"
-              disabled={loading || !name || !age || !dicomFile}
+              disabled={loading || !name || !age }
               className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition disabled:opacity-50"
             >
               {loading ? 'Se adaugă...' : 'Adaugă'}
