@@ -1,8 +1,8 @@
 import api from './api';
 
 export const patientService = {
-  async getPatients() {
-    const response = await api.get('/patients');
+  async getPatients(doctorId) {
+    const response = await api.get(`/patients?doctor_id=${doctorId}`);
     return response.data.patients;
   },
 

@@ -7,7 +7,7 @@ patient_bp = Blueprint('patients', __name__, url_prefix='/api/patients')
 
 @patient_bp.route('/', methods=['GET'])
 def get_patients():
-    doctor_id = session.get('doctor_id')
+    doctor_id = request.args.get('doctor_id') or session.get('doctor_id')
     if not doctor_id:
         return jsonify({'error': 'doctor_id is required'}), 400
     

@@ -19,13 +19,15 @@ function Dashboard() {
   const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
-    loadPatients();
+    if (doctor?.id) {
+      loadPatients();
+    }
   }, [doctor]);
 
   const loadPatients = async () => {
     setLoading(true);
     try {
-      const data = await patientService.getPatients(); // fără doctor.id
+      const data = await patientService.getPatients(doctor.id);
       setPatients(data);
     } catch (err) {
       console.error('Error loading patients:', err);
@@ -33,7 +35,6 @@ function Dashboard() {
       setLoading(false);
     }
   };
-
   const stats = {
     totalPatients: patients.length,
     completed: patients.filter(p => p.status === 'completed').length,
