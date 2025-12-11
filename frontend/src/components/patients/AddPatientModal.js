@@ -15,13 +15,9 @@ const handleSubmit = async (e) => {
   setLoading(true);
   try {
     
-    const doctor = JSON.parse(localStorage.getItem('doctor'));
-    if (!doctor) throw new Error("Doctor not found in localStorage");
-
     await patientService.createPatient(
       { name, age: parseInt(age) },
-      dicomFile,
-      doctor.id 
+      dicomFile
     );
     onSuccess();
   } catch (err) {

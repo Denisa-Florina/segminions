@@ -23,10 +23,9 @@ function Dashboard() {
   }, [doctor]);
 
   const loadPatients = async () => {
-    if (!doctor) return;
     setLoading(true);
     try {
-      const data = await patientService.getPatients(doctor.id);
+      const data = await patientService.getPatients(); // fără doctor.id
       setPatients(data);
     } catch (err) {
       console.error('Error loading patients:', err);
