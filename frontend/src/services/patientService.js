@@ -15,12 +15,13 @@ export const patientService = {
     const formData = new FormData();
     formData.append('name', patientData.name);
     formData.append('age', patientData.age);
+    console.log("Doctor ID:", doctorId);
     formData.append('doctor_id', doctorId);
     if (dicomFile) {
         formData.append('dicom_file', dicomFile);
     }
 
-    const response = await api.post('/patients', formData);
+    const response = await api.post('/patients/', formData);
     return response.data.patient;
   },
 

@@ -55,6 +55,8 @@ def create_patient():
         doctor_id = request.form.get('doctor_id')
         dicom_file = request.files.get('dicom_file')
         
+        print(f"Received: Name={name}, Age={age}, DocID={doctor_id}, File={dicom_file}")
+
         if not all([name, age, doctor_id]):
             return jsonify({'error': 'Missing required fields'}), 400
         
