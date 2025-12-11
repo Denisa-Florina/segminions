@@ -11,22 +11,16 @@ export const patientService = {
     return response.data.patient;
   },
 
-  async createPatient(patientData, dicomFile) {
-    const doctor = JSON.parse(localStorage.getItem('doctor'));
-    if (!doctor) throw new Error("Doctor not found in localStorage");
-
+  async createPatient(patientData, dicomFile, doctorId) {
     const formData = new FormData();
     formData.append('name', patientData.name);
     formData.append('age', patientData.age);
-    formData.append('doctor_id', doctor.id);
-    formData.append('dicom_file', dicomFile);
+    formData.append('doctor_id', doctorId);
+    if (dicomFile) {
+        formData.append('dicom_file', dicomFile);
+    }
 
-    const response = await api.post('/patients', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
-    });
-    
+    const response = await api.post('/patients', formData);
     return response.data.patient;
   },
 
