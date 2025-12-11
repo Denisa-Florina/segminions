@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, send_file, session
 from backend.services.segmentationService import segmentation_service
 from backend.services.firebaseService import firebase_service
 import io
+from datetime import datetime
 
 patient_bp = Blueprint('patients', __name__, url_prefix='/api/patients')
 
@@ -58,8 +59,21 @@ def create_patient():
             return jsonify({'error': 'Missing required fields'}), 400
         
         patient_data = {'name': name, 'age': age}
-        patient = segmentation_service.process_dicom(dicom_file, patient_data, doctor_id)
         
+        if dicom_file:
+            patient = segmentation_service.process_dicom(dicom_file, patient_data, doctor_id)
+        else:
+            new_patient_data = {
+                'name': name,
+                'age': age,
+                'doctor_id': str(doctor_id), 
+                'segmented': False, 
+                'date': datetime.now().strftime("%Y-%m-%d"),
+                'metrics': {'confidence': 0}
+            }
+            patient = firebase_service.add_patient(new_patient_data)
+
+
         transformed_patient = {
             'id': patient['id'],
             'name': patient['name'],

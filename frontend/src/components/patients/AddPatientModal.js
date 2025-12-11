@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { X, Upload } from 'lucide-react';
 import patientService from '../../services/patientService';
 
-function AddPatientModal({ onClose, onSuccess }) {
+function AddPatientModal({doctorId, onClose, onSuccess }) {
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [dicomFile, setDicomFile] = useState(null);
@@ -17,7 +17,8 @@ const handleSubmit = async (e) => {
     
     await patientService.createPatient(
       { name, age: parseInt(age) },
-      dicomFile
+      dicomFile,
+      doctorId
     );
     onSuccess();
   } catch (err) {
