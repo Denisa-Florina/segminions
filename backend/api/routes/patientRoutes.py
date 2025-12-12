@@ -60,6 +60,8 @@ def create_patient():
         if not name or not age or not doctor_id:
             return jsonify({'error': 'Name, age, and doctor_id are required'}), 400
         
+        if not age
+
         try:
             age = int(age)
             if age < 1 or age > 150:

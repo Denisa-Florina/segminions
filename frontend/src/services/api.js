@@ -11,22 +11,28 @@ const api = axios.create({
   }
 });
 
-// api.interceptors.request.use(
-//   (config) => {
-//     const token = localStorage.getItem('authToken');
-//     if (token) {
-//       config.headers.Authorization = `Bearer ${token}`;
-//     }
-//     return config;
-//   },
-//   (error) => Promise.reject(error)
-// );
+api.interceptors.request.use(
+  (config) => {
+    if (config.data instanceof FormData) {
+      delete config.headers['Content-Type'];
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
 
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response) {
       const { status, data } = error.response;
+      
+      console.error('API Error:', {
+        status,
+        data,
+        url: error.config?.url,
+        method: error.config?.method
+      });
       
       if (status === 401 && window.location.pathname !== '/login') {
         localStorage.removeItem('authToken');
