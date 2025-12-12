@@ -51,14 +51,21 @@ def get_patient(patient_id):
 def create_patient():
     try:
         name = request.form.get('name')
-        age = request.form.get('age', type=int)
+        age = request.form.get('age')
         doctor_id = request.form.get('doctor_id')
         dicom_file = request.files.get('dicom_file')
         
         print(f"Received: Name={name}, Age={age}, DocID={doctor_id}, File={dicom_file}")
 
-        if not all([name, age, doctor_id]):
-            return jsonify({'error': 'Missing required fields'}), 400
+        if not name or not age or not doctor_id:
+            return jsonify({'error': 'Name, age, and doctor_id are required'}), 400
+        
+        try:
+            age = int(age)
+            if age < 1 or age > 150:
+                return jsonify({'error': 'Age must be between 1 and 150'}), 400
+        except ValueError:
+            return jsonify({'error': 'Age must be a valid number'}), 400
         
         patient_data = {'name': name, 'age': age}
         
@@ -75,6 +82,8 @@ def create_patient():
             }
             patient = firebase_service.add_patient(new_patient_data)
 
+        if not patient:
+            return jsonify({'error': 'Failed to create patient'}), 500
 
         transformed_patient = {
             'id': patient['id'],
@@ -82,7 +91,7 @@ def create_patient():
             'age': patient['age'],
             'date': patient['date'],
             'dicomFile': patient.get('dicom_file', ''),
-            'status': 'completed',
+            'status': 'completed' if patient.get('segmented') else 'pending',
             'confidence': patient.get('metrics', {}).get('confidence', 0)
         }
         
@@ -91,6 +100,7 @@ def create_patient():
             'patient': transformed_patient
         }), 201
     except Exception as e:
+        print(f"Error creating patient: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @patient_bp.route('/<patient_id>/upload-dicom', methods=['POST'])

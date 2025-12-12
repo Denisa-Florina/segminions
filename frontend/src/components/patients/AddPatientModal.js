@@ -7,27 +7,32 @@ function AddPatientModal({doctorId, onClose, onSuccess }) {
   const [age, setAge] = useState('');
   const [dicomFile, setDicomFile] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-const handleSubmit = async (e) => {
-  e.preventDefault();
-  if (!name || !age) return;
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!name || !age) {
+      setError('Numele și vârsta sunt obligatorii');
+      return;
+    }
 
-  setLoading(true);
-  try {
+    setLoading(true);
+    setError('');
     
-    await patientService.createPatient(
-      { name, age: parseInt(age) },
-      dicomFile,
-      doctorId
-    );
-    onSuccess();
-  } catch (err) {
-    alert('Eroare la adăugare pacient: ' + err.message);
-  } finally {
-    setLoading(false);
-  }
-};
-
+    try {
+      await patientService.createPatient(
+        { name, age: parseInt(age) },
+        dicomFile, 
+        doctorId
+      );
+      onSuccess();
+    } catch (err) {
+      console.error('Error adding patient:', err);
+      setError(err.message || 'Eroare la adăugare pacient');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
@@ -41,7 +46,9 @@ const handleSubmit = async (e) => {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Nume</label>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Nume <span className="text-red-400">*</span>
+            </label>
             <input
               type="text"
               value={name}
@@ -53,32 +60,44 @@ const handleSubmit = async (e) => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Vârstă</label>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Vârstă <span className="text-red-400">*</span>
+            </label>
             <input
               type="number"
               value={age}
               onChange={(e) => setAge(e.target.value)}
               className="w-full bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600 focus:border-blue-500 focus:outline-none"
               placeholder="Vârstă"
+              min="1"
+              max="150"
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Fișier DICOM</label>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Fișier DICOM <span className="text-gray-500">(opțional)</span>
+            </label>
             <label className="block border-2 border-dashed border-gray-600 rounded-lg p-6 text-center hover:border-blue-500 transition cursor-pointer">
               <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
               <p className="text-sm text-gray-300">
-                {dicomFile ? dicomFile.name : 'Click pentru a încărca'}
+                {dicomFile ? dicomFile.name : 'Click pentru a încărca (opțional)'}
               </p>
               <input
                 type="file"
-                accept=".dcm"
+                accept=".dcm,.nii,.nii.gz"
                 onChange={(e) => setDicomFile(e.target.files[0])}
                 className="hidden"
               />
             </label>
           </div>
+
+          {error && (
+            <div className="bg-red-900/50 border border-red-700 text-red-200 px-4 py-3 rounded-lg text-sm">
+              {error}
+            </div>
+          )}
 
           <div className="flex gap-3 pt-4">
             <button
@@ -90,8 +109,8 @@ const handleSubmit = async (e) => {
             </button>
             <button
               type="submit"
-              disabled={loading || !name || !age }
-              className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition disabled:opacity-50"
+              disabled={loading || !name || !age}
+              className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? 'Se adaugă...' : 'Adaugă'}
             </button>
