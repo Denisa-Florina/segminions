@@ -5,7 +5,7 @@ import patientService from '../../services/patientService';
 function AddPatientModal({doctorId, onClose, onSuccess }) {
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
-  const [dicomFile, setDicomFile] = useState(null);
+  const [dicomFiles, setDicomFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -22,7 +22,7 @@ function AddPatientModal({doctorId, onClose, onSuccess }) {
     try {
       await patientService.createPatient(
         { name, age: parseInt(age) },
-        dicomFile, 
+        dicomFiles, 
         doctorId
       );
       onSuccess();
@@ -82,12 +82,12 @@ function AddPatientModal({doctorId, onClose, onSuccess }) {
             <label className="block border-2 border-dashed border-gray-600 rounded-lg p-6 text-center hover:border-blue-500 transition cursor-pointer">
               <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
               <p className="text-sm text-gray-300">
-                {dicomFile ? dicomFile.name : 'Click pentru a încărca (opțional)'}
+                {dicomFiles.length ? dicomFiles.length + 'fișiere încărcate' : 'Click pentru a încărca (opțional)'}
               </p>
               <input
                 type="file"
-                accept=".dcm,.nii,.nii.gz"
-                onChange={(e) => setDicomFile(e.target.files[0])}
+                accept=".dcm" multiple
+                onChange={(e) => setDicomFiles(Array.from(e.target.files))}
                 className="hidden"
               />
             </label>

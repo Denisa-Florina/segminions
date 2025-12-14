@@ -1,26 +1,61 @@
 import React, { useState } from 'react';
-import { User, Upload, FileText, CheckCircle, ArrowLeft } from 'lucide-react';
+import { User, Upload, FileText, CheckCircle, ArrowLeft, Download } from 'lucide-react';
 import patientService from '../../services/patientService';
 
 function PatientProfile({ patient, onBack, onUpdate }) {
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
+  const [downloading, setDownloading] = useState(false);
 
   const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
 
     setUploading(true);
     setUploadResult(null);
 
     try {
-      const result = await patientService.uploadDicom(patient.id, file);
+      const result = await patientService.uploadDicom(patient.id, files);
       setUploadResult(result);
       onUpdate();
     } catch (err) {
       alert('Eroare la încărcare: ' + err.message);
     } finally {
       setUploading(false);
+      patient.status = 'completed';
+    }
+  };
+
+  const handleDownloadScan = async () => {
+    setDownloading(true);
+    try {
+      await patientService.downloadScan(patient.id);
+    } catch (error) {
+      alert('Eroare la descărcarea scan-ului: ' + error.message);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handleDownloadMask = async () => {
+    setDownloading(true);
+    try {
+      await patientService.downloadMask(patient.id);
+    } catch (error) {
+      alert('Eroare la descărcarea segmentării: ' + error.message);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handleDownloadBoth = async () => {
+    setDownloading(true);
+    try {
+      await patientService.downloadBoth(patient.id);
+    } catch (error) {
+      alert('Eroare la descărcarea fișierelor: ' + error.message);
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -80,7 +115,7 @@ function PatientProfile({ patient, onBack, onUpdate }) {
           {/* Upload Section */}
           <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
             <h3 className="text-xl font-bold text-white mb-4">
-              Încarcă fișier DICOM pentru predicție
+              Încarcă fișiere DICOM pentru predicție
             </h3>
             
             <label className="block">
@@ -92,7 +127,7 @@ function PatientProfile({ patient, onBack, onUpdate }) {
                 <p className="text-sm text-gray-400">Formatul acceptat: .dcm</p>
                 <input
                   type="file"
-                  accept=".dcm"
+                  accept=".dcm" multiple
                   onChange={handleFileUpload}
                   disabled={uploading}
                   className="hidden"
@@ -135,7 +170,7 @@ function PatientProfile({ patient, onBack, onUpdate }) {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4 mb-6">
               <div className="bg-gray-700/50 rounded-lg p-4">
                 <p className="text-sm text-gray-400 mb-1">Confidence Score</p>
                 <p className="text-2xl font-bold text-white">
@@ -154,6 +189,40 @@ function PatientProfile({ patient, onBack, onUpdate }) {
                 )}
               </div>
             </div>
+
+            {/* Download Buttons */}
+            {patient.status === 'completed' && (
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold text-gray-400 mb-3">Descarcă Rezultate:</h4>
+                
+                <button
+                  onClick={handleDownloadScan}
+                  disabled={downloading}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white rounded-lg transition font-medium"
+                >
+                  <Download className="w-5 h-5" />
+                  {downloading ? 'Se descarcă...' : 'Descarcă CT Scan (.nii.gz)'}
+                </button>
+
+                <button
+                  onClick={handleDownloadMask}
+                  disabled={downloading}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white rounded-lg transition font-medium"
+                >
+                  <Download className="w-5 h-5" />
+                  {downloading ? 'Se descarcă...' : 'Descarcă Segmentare (.nii.gz)'}
+                </button>
+
+                <button
+                  onClick={handleDownloadBoth}
+                  disabled={downloading}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-black rounded-lg transition font-medium"
+                >
+                  <Download className="w-5 h-5" />
+                  {downloading ? 'Se descarcă...' : 'Descarcă Ambele (ZIP)'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

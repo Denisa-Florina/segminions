@@ -5,6 +5,7 @@ from datetime import datetime
 import hashlib
 import base64
 import json
+from io import BytesIO
 
 
 service_account_json = os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON')
@@ -100,8 +101,9 @@ class FirebaseService:
             for doc in docs:
                 patient_data = doc.to_dict()
 
-                if 'file_data' in patient_data:
-                    patient_data.pop('file_data')
+                if 'file_data' in patient_data: patient_data.pop('file_data')
+                if 'scan_data' in patient_data: patient_data.pop('scan_data')
+                if 'mask_data' in patient_data: patient_data.pop('mask_data')
                 
                 if 'created_at' in patient_data:
                     patient_data['created_at'] = patient_data['created_at'].isoformat() if hasattr(patient_data['created_at'], 'isoformat') else str(patient_data['created_at'])
@@ -123,11 +125,11 @@ class FirebaseService:
             if doc.exists:
                 patient_data = doc.to_dict()
                 
-                # Option to exclude file data (for performance)
-                if not include_file and 'file_data' in patient_data:
-                    patient_data.pop('file_data')
+                if not include_file:
+                    if 'file_data' in patient_data: patient_data.pop('file_data')
+                    if 'scan_data' in patient_data: patient_data.pop('scan_data')
+                    if 'mask_data' in patient_data: patient_data.pop('mask_data')
                 
-                # Convert timestamps
                 if 'created_at' in patient_data:
                     patient_data['created_at'] = patient_data['created_at'].isoformat() if hasattr(patient_data['created_at'], 'isoformat') else str(patient_data['created_at'])
                 if 'updated_at' in patient_data:
@@ -161,33 +163,31 @@ class FirebaseService:
             return False
     
     @staticmethod
-    def save_file_to_patient(patient_id, file_data, filename):
+    def save_file_to_patient(patient_id, file_data, filename, storage_key='file_data'):
         """
-        Save file as base64 in patient document
-        Note: Firestore has a 1MB limit per document, so large files need special handling
+        Save file as base64 in patient document.
+        Args:
+            storage_key: 'scan_data' for original file, 'mask_data' for result
         """
         try:
-            # Convert file to base64
+            # Prepare data stream for reading
             file_data.seek(0)
             file_bytes = file_data.read()
             file_base64 = base64.b64encode(file_bytes).decode('utf-8')
             
-            # Calculate size
             file_size = len(file_bytes)
             file_size_mb = file_size / (1024 * 1024)
             
-            print(f"File size: {file_size_mb:.2f} MB")
+            print(f"Saving {storage_key} ({file_size_mb:.2f} MB)...")
             
-            # Firestore document limit is 1MB
-            # If file is too large, we'll split it into chunks
-            if file_size_mb > 0.9:  # Leave some room for other fields
-                return FirebaseService._save_large_file(patient_id, file_base64, filename, file_size)
+            # Firestore document limit is 1MB. Use chunks if larger.
+            if file_size_mb > 0.5: 
+                return FirebaseService._save_large_file(patient_id, file_base64, filename, file_size, storage_key)
             
-            # Small file - save directly in patient document
             updates = {
-                'file_data': file_base64,
-                'filename': filename,
-                'file_size': file_size,
+                storage_key: file_base64,
+                f'{storage_key}_filename': filename,
+                f'{storage_key}_size': file_size,
                 'updated_at': datetime.now()
             }
             
@@ -195,21 +195,17 @@ class FirebaseService:
             return True
             
         except Exception as e:
-            print(f"Error saving file: {e}")
+            print(f"Error saving file for {storage_key}: {e}")
             return False
     
     @staticmethod
-    def _save_large_file(patient_id, file_base64, filename, file_size):
-        """
-        Save large files by splitting into chunks in a subcollection
-        """
+    def _save_large_file(patient_id, file_base64, filename, file_size, storage_key):
+        """Save large files by splitting into chunks in a subcollection"""
         try:
-            # Split file into chunks (800KB per chunk to be safe)
-            chunk_size = 800 * 1024  # 800KB in base64 characters
+            chunk_size = 800 * 1024  # 800KB chunks
             chunks = [file_base64[i:i+chunk_size] for i in range(0, len(file_base64), chunk_size)]
             
-            # Save chunks to subcollection
-            chunks_ref = db.collection('patients').document(patient_id).collection('file_chunks')
+            chunks_ref = db.collection('patients').document(patient_id).collection(f'{storage_key}_chunks')
             
             # Delete old chunks
             old_chunks = chunks_ref.stream()
@@ -224,12 +220,11 @@ class FirebaseService:
                     'created_at': datetime.now()
                 })
             
-            # Update patient document with metadata
             updates = {
-                'filename': filename,
-                'file_size': file_size,
-                'file_chunks_count': len(chunks),
-                'is_chunked': True,
+                f'{storage_key}_filename': filename,
+                f'{storage_key}_size': file_size,
+                f'{storage_key}_chunks_count': len(chunks),
+                f'{storage_key}_is_chunked': True,
                 'updated_at': datetime.now()
             }
             
@@ -237,71 +232,57 @@ class FirebaseService:
             return True
             
         except Exception as e:
-            print(f"Error saving large file: {e}")
+            print(f"Error saving large file for {storage_key}: {e}")
             return False
     
     @staticmethod
-    def get_file_from_patient(patient_id):
-        """
-        Retrieve file data from patient document
-        """
+    def get_file_from_patient(patient_id, storage_key='file_data'):
+        """Retrieve file data from patient document"""
         try:
             patient = FirebaseService.get_patient_by_id(patient_id, include_file=True)
+            if not patient: return None
             
-            if not patient:
-                return None
+            # Check for chunks
+            if patient.get(f'{storage_key}_is_chunked', False):
+                return FirebaseService._get_large_file(patient_id, patient.get(f'{storage_key}_chunks_count', 0), storage_key)
             
-            # Check if file is chunked
-            if patient.get('is_chunked', False):
-                return FirebaseService._get_large_file(patient_id, patient.get('file_chunks_count', 0))
-            
-            # Small file - return directly
-            if 'file_data' in patient:
-                file_bytes = base64.b64decode(patient['file_data'])
+            # Check for direct data
+            if storage_key in patient:
+                file_bytes = base64.b64decode(patient[storage_key])
                 return {
                     'data': file_bytes,
-                    'filename': patient.get('filename', 'file.nii.gz'),
-                    'size': patient.get('file_size', 0)
+                    'filename': patient.get(f'{storage_key}_filename', 'file.nii.gz'),
+                    'size': patient.get(f'{storage_key}_size', 0),
+                    'storage_key': storage_key
                 }
-            
             return None
-            
         except Exception as e:
-            print(f"Error getting file: {e}")
+            print(f"Error getting file for {storage_key}: {e}")
             return None
     
     @staticmethod
-    def _get_large_file(patient_id, chunks_count):
-        """
-        Retrieve large file from chunks
-        """
+    def _get_large_file(patient_id, chunks_count, storage_key):
         try:
-            chunks_ref = db.collection('patients').document(patient_id).collection('file_chunks')
-            
-            # Get all chunks ordered
+            chunks_ref = db.collection('patients').document(patient_id).collection(f'{storage_key}_chunks')
             chunks = chunks_ref.order_by('order').stream()
             
-            # Reconstruct file
             file_base64 = ''
             for chunk in chunks:
                 chunk_data = chunk.to_dict()
-                file_base64 += chunk_data['data']
+                if 'data' in chunk_data:
+                    file_base64 += chunk_data['data']
             
-            # Decode
             file_bytes = base64.b64decode(file_base64)
-            
-            # Get metadata
             patient = FirebaseService.get_patient_by_id(patient_id, include_file=False)
             
             return {
                 'data': file_bytes,
-                'filename': patient.get('filename', 'file.nii.gz'),
-                'size': patient.get('file_size', 0)
+                'filename': patient.get(f'{storage_key}_filename', 'file.nii.gz'),
+                'size': patient.get(f'{storage_key}_size', 0),
+                'storage_key': storage_key
             }
-            
         except Exception as e:
-            print(f"Error getting large file: {e}")
+            print(f"Error getting large file for {storage_key}: {e}")
             return None
-
 
 firebase_service = FirebaseService()
