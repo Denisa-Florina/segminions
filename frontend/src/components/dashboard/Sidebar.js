@@ -23,7 +23,7 @@ function Sidebar({ activeView, setActiveView, setShowSettings }) {
         <button
           onClick={() => setActiveView('dashboard')}
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition ${
-            activeView === 'dashboard' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'
+            activeView === 'dashboard' ? 'bg-blue-600 text-white' : 'bg-gray-900 text-gray-300 hover:bg-gray-700'
           }`}
         >
           <BarChart3 className="w-5 h-5" />
@@ -33,7 +33,7 @@ function Sidebar({ activeView, setActiveView, setShowSettings }) {
         <button
           onClick={() => setActiveView('patients')}
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition ${
-            activeView === 'patients' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'
+            activeView === 'patients' ? 'bg-blue-600 text-white' : 'bg-gray-900 text-gray-300 hover:bg-gray-700'
           }`}
         >
           <Users className="w-5 h-5" />
@@ -42,7 +42,7 @@ function Sidebar({ activeView, setActiveView, setShowSettings }) {
 
         <button
           onClick={() => setShowSettings(true)}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:bg-gray-700 transition"
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-gray-900 text-gray-300 hover:bg-gray-700 transition"
         >
           <Settings className="w-5 h-5" />
           <span className="font-medium">Setări</span>

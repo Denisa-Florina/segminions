@@ -49,7 +49,7 @@ function DashboardView({ stats, patients, onViewPatient, loading }) {
               <BarChart3 className="w-6 h-6 text-purple-400" />
             </div>
           </div>
-          <p className="text-gray-400 text-sm mb-1">Confidence Medie</p>
+          <p className="text-gray-400 text-sm mb-1">Confidence</p>
           <p className="text-3xl font-bold text-white">{stats.avgConfidence}%</p>
         </div>
 

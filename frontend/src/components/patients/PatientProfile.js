@@ -63,7 +63,7 @@ function PatientProfile({ patient, onBack, onUpdate }) {
     <div className="p-8">
       <button
         onClick={onBack}
-        className="flex items-center gap-2 text-gray-400 hover:text-white mb-6 transition"
+        className="flex items-center gap-2  bg-gray-900 text-gray-400 hover:text-white mb-6 transition"
       >
         <ArrowLeft className="w-5 h-5" />
         Înapoi la pacienți
@@ -161,14 +161,14 @@ function PatientProfile({ patient, onBack, onUpdate }) {
           <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
             <h3 className="text-xl font-bold text-white mb-4">Rezultate Segmentare</h3>
             
-            <div className="bg-gray-700/50 rounded-lg p-4 mb-4">
+            {/* <div className="bg-gray-700/50 rounded-lg p-4 mb-4">
               <div className="aspect-video bg-gray-900 rounded-lg flex items-center justify-center">
                 <FileText className="w-16 h-16 text-gray-600" />
               </div>
               <p className="text-sm text-gray-400 mt-2 text-center">
                 Vizualizare rezultate segmentare
               </p>
-            </div>
+            </div> */}
 
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div className="bg-gray-700/50 rounded-lg p-4">
@@ -177,7 +177,7 @@ function PatientProfile({ patient, onBack, onUpdate }) {
                   {((patient.confidence || 0) * 100).toFixed(1)}%
                 </p>
               </div>
-              <div className="bg-gray-700/50 rounded-lg p-4">
+              {/* <div className="bg-gray-700/50 rounded-lg p-4">
                 <p className="text-sm text-gray-400 mb-1">Fișier</p>
                 <p className="text-sm font-medium text-white truncate">
                   {patient.filename || 'N/A'}
@@ -187,7 +187,7 @@ function PatientProfile({ patient, onBack, onUpdate }) {
                     Size: {(patient.file_size / (1024 * 1024)).toFixed(2)} MB
                   </p>
                 )}
-              </div>
+              </div> */}
             </div>
 
             {/* Download Buttons */}
