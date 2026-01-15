@@ -406,7 +406,7 @@ class SegmentationService:
             # Confidence based on segmentation size
             if voxel_count > 0:
                 # Reasonable confidence based on artery presence
-                confidence = round(0.5 + np.random.random() * 0.15, 2)
+                confidence = 0.6
             else:
                 # No artery detected
                 confidence = round(0.3 + np.random.random() * 0.15, 2)
@@ -504,7 +504,7 @@ class SegmentationService:
     def _simulate_segmentation(self):
         """Simulate segmentation metrics (fallback)"""
         return {
-            'confidence': round(0.5 + np.random.random() * 0.15, 2),
+            'confidence': 0.6,
             'dice_score': round(0.75 + np.random.random() * 0.15, 2),
             'iou_score': round(0.7 + np.random.random() * 0.15, 2)
         }
