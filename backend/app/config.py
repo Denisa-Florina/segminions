@@ -1,0 +1,59 @@
+"""Application configuration, read from environment variables."""
+
+import os
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+class Config:
+    SECRET_KEY = os.environ.get("SECRET_KEY")
+    MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50 MB per request
+
+    FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://medsegai.web.app").rstrip("/")
+    CORS_ORIGINS = ["http://localhost:3000", "http://localhost:3001", FRONTEND_URL]
+
+    # Either the full service-account JSON (used on Render) or a path to the key file.
+    FIREBASE_SERVICE_ACCOUNT_JSON = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+    FIREBASE_CREDENTIALS_PATH = Path(
+        os.environ.get("FIREBASE_CREDENTIALS_PATH", BASE_DIR / "serviceAccountKey.json")
+    )
+
+    MODEL_DIR = Path(os.environ.get("MODEL_DIR", BASE_DIR / "ml_weights" / "nnunet"))
+
+    INIT_FIREBASE = True
+    LOAD_MODEL = True
+    LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+
+
+class DevelopmentConfig(Config):
+    DEBUG = True
+    SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-secret-key")
+
+
+class ProductionConfig(Config):
+    pass
+
+
+class TestingConfig(Config):
+    TESTING = True
+    SECRET_KEY = "test-secret-key"
+    INIT_FIREBASE = False
+    LOAD_MODEL = False
+
+
+_CONFIGS = {
+    "development": DevelopmentConfig,
+    "production": ProductionConfig,
+    "testing": TestingConfig,
+}
+
+
+def get_config() -> type[Config]:
+    env = os.environ.get("APP_ENV") or os.environ.get("FLASK_ENV") or "production"
+    try:
+        return _CONFIGS[env]
+    except KeyError:
+        raise RuntimeError(
+            f"Unknown APP_ENV '{env}'. Expected one of: {', '.join(_CONFIGS)}"
+        ) from None
