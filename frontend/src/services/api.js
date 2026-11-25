@@ -5,14 +5,19 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:5001/api
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
-  withCredentials: true,
   headers: {
     'Content-Type': 'application/json'
   }
 });
 
+export const TOKEN_KEY = 'authToken';
+
 api.interceptors.request.use(
   (config) => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
     if (config.data instanceof FormData) {
       delete config.headers['Content-Type'];
     }
@@ -35,7 +40,8 @@ api.interceptors.response.use(
       });
       
       if (status === 401 && window.location.pathname !== '/login') {
-        localStorage.removeItem('authToken');
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem('doctor');
         window.location.href = '/login';
       }
       

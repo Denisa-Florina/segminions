@@ -27,7 +27,7 @@ function Dashboard() {
   const loadPatients = async () => {
     setLoading(true);
     try {
-      const data = await patientService.getPatients(doctor.id);
+      const data = await patientService.getPatients();
       setPatients(data);
     } catch (err) {
       console.error('Error loading patients:', err);
@@ -104,7 +104,6 @@ function Dashboard() {
 
       {showAddPatient && (
         <AddPatientModal
-          doctorId={doctor.id}
           onClose={() => setShowAddPatient(false)}
           onSuccess={() => {
             setShowAddPatient(false);

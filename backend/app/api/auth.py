@@ -1,6 +1,7 @@
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, request
 
-from app.core.errors import AuthenticationError, ValidationError
+from app.core.errors import ValidationError
+from app.core.security import create_access_token, current_doctor_id, require_authentication
 from app.services.auth_service import auth_service
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
@@ -14,20 +15,20 @@ def login():
         raise ValidationError("Email and password are required")
 
     doctor = auth_service.authenticate(email, password)
-    session["doctor_id"] = doctor["id"]
-    session["doctor_email"] = doctor["email"]
-    return jsonify({"message": "Login successful", "doctor": doctor}), 200
+    return jsonify({
+        "message": "Login successful",
+        "doctor": doctor,
+        "token": create_access_token(doctor["id"]),
+    }), 200
 
 
 @auth_bp.post("/logout")
 def logout():
-    session.clear()
+    # Tokens are stateless: logging out means the client discards its token.
     return jsonify({"message": "Logout successful"}), 200
 
 
 @auth_bp.get("/me")
 def get_current_doctor():
-    doctor_id = session.get("doctor_id")
-    if not doctor_id:
-        raise AuthenticationError("Not authenticated")
-    return jsonify({"doctor": auth_service.get_doctor(doctor_id)}), 200
+    require_authentication()
+    return jsonify({"doctor": auth_service.get_doctor(current_doctor_id())}), 200

@@ -55,15 +55,27 @@ credentials or GPU.
 - Start command: `gunicorn wsgi:app`
 - Environment variables: `APP_ENV=production`, `SECRET_KEY`, `FIREBASE_SERVICE_ACCOUNT_JSON`, `FRONTEND_URL`
 
+## Security
+
+- **Authentication:** `POST /api/auth/login` returns a signed JWT (HS256, `SECRET_KEY`,
+  expires after `ACCESS_TOKEN_TTL_MINUTES`, default 8 h). Every `/api/patients` request must
+  send `Authorization: Bearer <token>`.
+- **Authorization:** the doctor is identified only from the token. Each patient operation
+  checks ownership; another doctor's patient is answered with `404`, so its existence is
+  not revealed.
+- **Passwords** are hashed with bcrypt. Legacy unsalted SHA-256 hashes are verified once
+  and upgraded to bcrypt on the next successful login.
+- Login returns the same error for an unknown email and a wrong password.
+
 ## API
 
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/api/health` | Health check |
-| POST | `/api/auth/login` | Log in with email and password |
-| POST | `/api/auth/logout` | Log out |
+| POST | `/api/auth/login` | Log in with email and password, returns a JWT access token |
+| POST | `/api/auth/logout` | Log out (the client discards its token) |
 | GET | `/api/auth/me` | Current doctor |
-| GET | `/api/patients?doctor_id=` | List a doctor's patients |
+| GET | `/api/patients` | List the authenticated doctor's patients |
 | POST | `/api/patients/` | Create a patient (multipart, optional `dicom_file`s) |
 | GET | `/api/patients/<id>` | Patient details and metrics |
 | PUT | `/api/patients/<id>` | Update name / age |
@@ -76,8 +88,9 @@ credentials or GPU.
 
 ## Known limitations
 
-- **Authorization:** the doctor id is still taken from the request; it will be replaced by
-  Firebase ID token verification (`app/core/security.py`).
+- **Token revocation:** tokens are stateless, so logout cannot invalidate a token before it
+  expires. A short TTL with refresh tokens, or a deny-list, would address this.
+- **No rate limiting** on login yet (e.g. Flask-Limiter).
 - **Confidence metric** is a placeholder; it will be computed from the model's softmax output.
 - **File storage:** scans are stored as base64 in Firestore; Cloud Storage is the target.
 - **Synchronous inference:** segmentation runs inside the request; a background job queue

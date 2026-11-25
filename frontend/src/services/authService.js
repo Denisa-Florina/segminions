@@ -1,23 +1,36 @@
-import api from './api';
+import api, { TOKEN_KEY } from './api';
+
+const DOCTOR_KEY = 'doctor';
 
 export const authService = {
   async login(email, password) {
     const response = await api.post('/auth/login', { email, password });
+    const { doctor, token } = response.data;
 
-    localStorage.setItem('doctor', JSON.stringify(response.data.doctor));
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(DOCTOR_KEY, JSON.stringify(doctor));
 
-    return response.data.doctor;
+    return doctor;
   },
 
   async logout() {
-    await api.post('/auth/logout');
-    localStorage.removeItem('doctor');
+    try {
+      await api.post('/auth/logout');
+    } finally {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(DOCTOR_KEY);
+    }
   },
 
   async getCurrentDoctor() {
-    const doctor = localStorage.getItem('doctor');
-    if (doctor) return JSON.parse(doctor);
-    return null;
+    // Without a token the stored doctor is useless: every API call would return 401.
+    const token = localStorage.getItem(TOKEN_KEY);
+    const doctor = localStorage.getItem(DOCTOR_KEY);
+    if (!token || !doctor) {
+      localStorage.removeItem(DOCTOR_KEY);
+      return null;
+    }
+    return JSON.parse(doctor);
   }
 };
 

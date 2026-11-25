@@ -1,9 +1,15 @@
-"""Patient workflows: create, upload scans, run segmentation, download results."""
+"""Patient workflows: create, upload scans, run segmentation, download results.
+
+Every operation is scoped to the authenticated doctor: a patient that belongs to
+another doctor is reported as not found, so its existence is not revealed.
+"""
 
 import io
 import logging
 import zipfile
 from datetime import datetime
+
+from flask import current_app
 
 from app.core.errors import NotFoundError, ValidationError
 from app.extensions import get_segmenter
@@ -36,21 +42,25 @@ class PatientService:
     def list_for_doctor(self, doctor_id: str) -> list[dict]:
         return self.patients.list_by_doctor(doctor_id)
 
-    def get(self, patient_id: str) -> dict:
+    def get(self, patient_id: str, doctor_id: str) -> dict:
         patient = self.patients.get(patient_id)
-        if not patient:
+        if not patient or patient.get("doctor_id") != str(doctor_id):
             raise NotFoundError("Patient not found")
         return patient
 
-    def get_file(self, patient_id: str, key: str, not_found_message: str) -> StoredFile:
+    def get_file(
+        self, patient_id: str, doctor_id: str, key: str, not_found_message: str
+    ) -> StoredFile:
+        self.get(patient_id, doctor_id)
         stored = self.files.load(patient_id, key)
         if not stored:
             raise NotFoundError(not_found_message)
         return stored
 
-    def build_results_zip(self, patient_id: str) -> tuple[io.BytesIO, str]:
-        scan = self.get_file(patient_id, SCAN, "Scan file not found")
-        mask = self.get_file(patient_id, MASK, "Mask file not found")
+    def build_results_zip(self, patient_id: str, doctor_id: str) -> tuple[io.BytesIO, str]:
+        patient = self.get(patient_id, doctor_id)
+        scan = self.get_file(patient_id, doctor_id, SCAN, "Scan file not found")
+        mask = self.get_file(patient_id, doctor_id, MASK, "Mask file not found")
 
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -58,7 +68,7 @@ class PatientService:
             archive.writestr(mask.filename or "mask.nii.gz", mask.data)
         buffer.seek(0)
 
-        patient_name = self.get(patient_id).get("name", "patient").replace(" ", "_")
+        patient_name = patient.get("name", "patient").replace(" ", "_")
         return buffer, f"{patient_name}_segmentation_results.zip"
 
     # --- commands ----------------------------------------------------------
@@ -85,10 +95,10 @@ class PatientService:
             logger.exception("Patient %s created but its files could not be saved", patient["id"])
         return patient
 
-    def upload_scan(self, patient_id: str, dicom_files) -> dict:
+    def upload_scan(self, patient_id: str, doctor_id: str, dicom_files) -> dict:
         if not dicom_files:
             raise ValidationError("No DICOM file uploaded")
-        self.get(patient_id)
+        self.get(patient_id, doctor_id)
 
         scan = self._convert(dicom_files)
         metrics, mask_stream = self._segmenter_provider().segment(scan.stream)
@@ -110,9 +120,9 @@ class PatientService:
             "metrics": metrics,
         }
 
-    def resegment(self, patient_id: str) -> dict:
-        patient = self.get(patient_id)
-        scan = self.get_file(patient_id, SCAN, "Scan file not found")
+    def resegment(self, patient_id: str, doctor_id: str) -> dict:
+        patient = self.get(patient_id, doctor_id)
+        scan = self.get_file(patient_id, doctor_id, SCAN, "Scan file not found")
 
         metrics, mask_stream = self._segmenter_provider().segment(io.BytesIO(scan.data))
         self.files.save(
@@ -120,20 +130,24 @@ class PatientService:
         )
         return self.patients.update(patient_id, {"metrics": metrics})
 
-    def update(self, patient_id: str, updates: dict) -> dict:
+    def update(self, patient_id: str, doctor_id: str, updates: dict) -> dict:
+        self.get(patient_id, doctor_id)
         patient = self.patients.update(patient_id, updates)
         if not patient:
             raise NotFoundError("Patient not found")
         return patient
 
-    def delete(self, patient_id: str) -> None:
-        self.get(patient_id)
+    def delete(self, patient_id: str, doctor_id: str) -> None:
+        self.get(patient_id, doctor_id)
         self.patients.delete(patient_id)
 
     # --- helpers -----------------------------------------------------------
 
     @staticmethod
     def _convert(dicom_files) -> NiftiScan:
+        max_files = current_app.config["MAX_DICOM_FILES"]
+        if len(dicom_files) > max_files:
+            raise ValidationError(f"Too many files: at most {max_files} DICOM slices per upload")
         try:
             return convert_dicom_series(dicom_files)
         except DicomConversionError as error:

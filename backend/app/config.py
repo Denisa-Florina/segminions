@@ -9,6 +9,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY")
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50 MB per request
+    MAX_DICOM_FILES = 1000  # slices per upload
+    ACCESS_TOKEN_TTL_MINUTES = int(os.environ.get("ACCESS_TOKEN_TTL_MINUTES", 8 * 60))
 
     FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://medsegai.web.app").rstrip("/")
     CORS_ORIGINS = ["http://localhost:3000", "http://localhost:3001", FRONTEND_URL]

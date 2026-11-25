@@ -20,3 +20,6 @@ class DoctorRepository:
         if not doc.exists:
             return None
         return {"id": doc.id, **doc.to_dict()}
+
+    def update_password_hash(self, doctor_id: str, password_hash: str) -> None:
+        self._collection().document(doctor_id).update({"password": password_hash})

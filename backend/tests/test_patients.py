@@ -1,3 +1,5 @@
+from io import BytesIO
+
 import pytest
 
 from app.core.errors import ValidationError
@@ -8,48 +10,121 @@ from app.schemas.patient import (
     PatientUpdate,
     validate_input,
 )
+from tests.conftest import make_auth_headers
+
+# --- authentication --------------------------------------------------------
+
+@pytest.mark.parametrize("method, url", [
+    ("get", "/api/patients"),
+    ("post", "/api/patients/"),
+    ("get", "/api/patients/p1"),
+    ("put", "/api/patients/p1"),
+    ("delete", "/api/patients/p1"),
+    ("post", "/api/patients/p1/upload-dicom"),
+    ("post", "/api/patients/p1/re-segment"),
+    ("get", "/api/patients/p1/download/scan"),
+    ("get", "/api/patients/p1/download/mask"),
+    ("get", "/api/patients/p1/download/both"),
+])
+def test_every_patient_endpoint_requires_a_token(client, method, url):
+    assert getattr(client, method)(url).status_code == 401
 
 
-def test_list_patients_requires_doctor_id(client):
-    assert client.get("/api/patients").status_code == 400
+def test_cors_preflight_does_not_require_a_token(client):
+    response = client.options(
+        "/api/patients",
+        headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "GET"},
+    )
+    assert response.status_code == 200
 
+
+# --- authorization: a doctor only sees their own patients -------------------
+
+def test_list_returns_only_own_patients(client, patients, auth_headers):
+    # The doctor_id query parameter is ignored; the token decides.
+    response = client.get("/api/patients?doctor_id=doctor-2", headers=auth_headers)
+    assert response.status_code == 200
+    assert [p["id"] for p in response.get_json()["patients"]] == ["p1"]
+
+
+def test_get_own_patient(client, patients, auth_headers):
+    response = client.get("/api/patients/p1", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.get_json()["patient"]["name"] == "Ion"
+
+
+@pytest.mark.parametrize("method, url, kwargs", [
+    ("get", "/api/patients/p2", {}),
+    ("put", "/api/patients/p2", {"json": {"name": "Hacked"}}),
+    ("delete", "/api/patients/p2", {}),
+    ("post", "/api/patients/p2/re-segment", {}),
+    ("get", "/api/patients/p2/download/scan", {}),
+    ("get", "/api/patients/p2/download/both", {}),
+])
+def test_other_doctors_patient_is_not_found(client, patients, auth_headers, method, url, kwargs):
+    response = getattr(client, method)(url, headers=auth_headers, **kwargs)
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Patient not found"}
+    assert patients["p2"]["name"] == "Maria"   # untouched
+
+
+def test_create_assigns_patient_to_authenticated_doctor(client, patients, auth_headers):
+    form = {"name": "Andrei", "age": "30", "doctor_id": "doctor-2"}   # attempt to spoof
+    response = client.post("/api/patients/", data=form, headers=auth_headers)
+    assert response.status_code == 201
+    created_id = response.get_json()["patient"]["id"]
+    assert patients[created_id]["doctor_id"] == "doctor-1"
+
+
+def test_update_and_delete_own_patient(app, client, patients, auth_headers):
+    response = client.put("/api/patients/p1", json={"name": "Ion Pop"}, headers=auth_headers)
+    assert response.status_code == 200
+    assert patients["p1"]["name"] == "Ion Pop"
+
+    assert client.delete("/api/patients/p1", headers=auth_headers).status_code == 200
+    assert "p1" not in patients
+
+
+def test_doctor_2_cannot_see_doctor_1_patients(app, client, patients):
+    headers = make_auth_headers(app, "doctor-2")
+    assert client.get("/api/patients/p1", headers=headers).status_code == 404
+    listed = client.get("/api/patients", headers=headers).get_json()["patients"]
+    assert [p["id"] for p in listed] == ["p2"]
+
+
+# --- input validation ------------------------------------------------------
 
 @pytest.mark.parametrize("form, message", [
-    ({"name": "Ion", "age": "40"}, "doctor_id is required"),
-    ({"age": "40", "doctor_id": "d1"}, "name is required"),
-    ({"name": "   ", "age": "40", "doctor_id": "d1"}, "name: String should have at least 1"),
-    ({"name": "Ion", "age": "abc", "doctor_id": "d1"}, "age: Input should be a valid integer"),
-    ({"name": "Ion", "age": "200", "doctor_id": "d1"}, "age: Input should be less than or equal"),
+    ({"age": "40"}, "name is required"),
+    ({"name": "   ", "age": "40"}, "name: String should have at least 1"),
+    ({"name": "Ion", "age": "abc"}, "age: Input should be a valid integer"),
+    ({"name": "Ion", "age": "200"}, "age: Input should be less than or equal"),
 ])
-def test_create_patient_rejects_invalid_input(client, form, message):
-    response = client.post("/api/patients/", data=form)
+def test_create_patient_rejects_invalid_input(client, auth_headers, form, message):
+    response = client.post("/api/patients/", data=form, headers=auth_headers)
     assert response.status_code == 400
     assert message in response.get_json()["error"]
 
 
+def test_create_patient_rejects_too_many_files(app, client, auth_headers):
+    app.config["MAX_DICOM_FILES"] = 2
+    files = [(BytesIO(b"x"), f"slice{i}.dcm") for i in range(3)]
+    response = client.post(
+        "/api/patients/", headers=auth_headers,
+        data={"name": "Ion", "age": "40", "dicom_file": files},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 400
+    assert "Too many files" in response.get_json()["error"]
+
+
 @pytest.mark.parametrize("body", [{"age": "abc"}, {"age": -5}, {"name": ""}])
-def test_update_patient_rejects_invalid_values(client, body):
-    # Previously these were written to Firestore unvalidated.
-    assert client.put("/api/patients/p1", json=body).status_code == 400
+def test_update_patient_rejects_invalid_values(client, patients, auth_headers, body):
+    assert client.put("/api/patients/p1", json=body, headers=auth_headers).status_code == 400
 
 
-def test_update_patient_requires_body(client):
-    assert client.put("/api/patients/p1", json={}).status_code == 400
-
-
-def test_get_missing_patient_returns_404(client, no_patients):
-    response = client.get("/api/patients/does-not-exist")
-    assert response.status_code == 404
-    assert response.get_json() == {"error": "Patient not found"}
-
-
-def test_update_missing_patient_returns_404(client, no_patients):
-    response = client.put("/api/patients/does-not-exist", json={"name": "New name"})
-    assert response.status_code == 404
-
-
-def test_delete_missing_patient_returns_404(client, no_patients):
-    assert client.delete("/api/patients/does-not-exist").status_code == 404
+def test_update_patient_requires_body(client, auth_headers):
+    assert client.put("/api/patients/p1", json={}, headers=auth_headers).status_code == 400
 
 
 # --- schemas ---------------------------------------------------------------

@@ -21,7 +21,7 @@ def validate_input(model: type[ModelT], data: dict) -> ModelT:
     except PydanticValidationError as error:
         first = error.errors()[0]
         field = ".".join(str(part) for part in first["loc"]) or "body"
-        if first["type"] == "missing":
+        if first["type"] == "missing" or first.get("input", "") is None:
             raise ValidationError(f"{field} is required") from None
         raise ValidationError(f"{field}: {first['msg']}") from None
 

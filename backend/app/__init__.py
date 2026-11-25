@@ -24,9 +24,9 @@ def create_app(config_class: type[Config] | None = None) -> Flask:
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
 
+    # Auth uses a Bearer token in the Authorization header, not cookies.
     CORS(
         app,
-        supports_credentials=True,
         origins=app.config["CORS_ORIGINS"],
         allow_headers=["Content-Type", "Authorization"],
         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],

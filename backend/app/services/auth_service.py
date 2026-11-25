@@ -1,9 +1,17 @@
 """Doctor authentication."""
 
-import hashlib
+import logging
 
 from app.core.errors import AuthenticationError, NotFoundError
+from app.core.security import hash_password, is_legacy_hash, verify_password
 from app.repositories.doctor_repository import DoctorRepository
+
+logger = logging.getLogger(__name__)
+
+INVALID_CREDENTIALS = "Invalid email or password"
+
+# Checked when the email is unknown, so both failure cases take the same time.
+_DUMMY_HASH = hash_password("dummy-password")
 
 
 def _without_password(doctor: dict) -> dict:
@@ -17,12 +25,16 @@ class AuthService:
     def authenticate(self, email: str, password: str) -> dict:
         doctor = self.doctors.get_by_email(email)
         if not doctor:
-            raise AuthenticationError("Doctor not found")
+            verify_password(password, _DUMMY_HASH)
+            raise AuthenticationError(INVALID_CREDENTIALS)
 
-        # Unsalted SHA-256 matches the hashes currently stored in Firestore.
-        password_hash = hashlib.sha256(password.encode()).hexdigest()
-        if doctor.get("password") != password_hash:
-            raise AuthenticationError("Invalid password")
+        stored_hash = doctor.get("password")
+        if not verify_password(password, stored_hash):
+            raise AuthenticationError(INVALID_CREDENTIALS)
+
+        if is_legacy_hash(stored_hash):
+            self.doctors.update_password_hash(doctor["id"], hash_password(password))
+            logger.info("Upgraded password hash to bcrypt for doctor %s", doctor["id"])
 
         return _without_password(doctor)
 

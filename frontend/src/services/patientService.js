@@ -1,8 +1,8 @@
 import api from './api';
 
 export const patientService = {
-  async getPatients(doctorId) {
-    const response = await api.get(`/patients?doctor_id=${doctorId}`);
+  async getPatients() {
+    const response = await api.get('/patients');
     return response.data.patients;
   },
 
@@ -11,24 +11,14 @@ export const patientService = {
     return response.data.patient;
   },
 
-  async createPatient(patientData, dicomFiles, doctorId) {
+  async createPatient(patientData, dicomFiles) {
     const formData = new FormData();
     formData.append('name', patientData.name);
     formData.append('age', patientData.age);
-
-    console.log("Doctor ID:", doctorId);
-    console.log("Name:", patientData.name);
-    console.log("Age:", patientData.age);
-
-    formData.append('doctor_id', doctorId);
     if (dicomFiles && dicomFiles.length > 0) {
-      dicomFiles.forEach(element => {
-        formData.append('dicom_file', element);
+      dicomFiles.forEach(file => {
+        formData.append('dicom_file', file);
       });
-    }
-
-    for (let pair of formData.entries()) {
-      console.log( 'formData: ' + pair[0] + ': ' + pair[1]);
     }
 
     const response = await api.post('/patients/', formData, {
