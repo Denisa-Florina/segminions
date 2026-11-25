@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class Segmenter:
-    def __init__(self, model_dir: Path, num_threads: int = 1, batch_size: int = 16):
+    def __init__(self, model_dir: Path, num_threads: int = 1, batch_size: int = 1):
         torch.set_num_threads(num_threads)
         self._batch_size = batch_size
         self._model: NnUnetModel | None = load_nnunet_model(model_dir)

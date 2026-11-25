@@ -82,7 +82,11 @@ def _build_network(config: dict, num_classes: int) -> torch.nn.Module:
 
 def _load_state_dict(checkpoint_path: Path, device: torch.device) -> dict:
     # weights_only=False is required for nnU-Net checkpoints; the file is our own.
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    # mmap=True reads tensors from disk on demand, so the training-only parts of the
+    # checkpoint (optimizer state, ~half the file) are never loaded into memory.
+    checkpoint = torch.load(
+        checkpoint_path, map_location=device, weights_only=False, mmap=True
+    )
     if isinstance(checkpoint, dict):
         for key in ("network_weights", "state_dict"):
             if key in checkpoint:

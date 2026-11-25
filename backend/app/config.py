@@ -25,7 +25,9 @@ class Config:
     # PyTorch defaults to one thread per host core, which thrashes on small container
     # CPU quotas (Render free tier: 0.1 CPU). Raise this on machines with dedicated cores.
     TORCH_NUM_THREADS = int(os.environ.get("TORCH_NUM_THREADS", 1))
-    INFERENCE_BATCH_SIZE = int(os.environ.get("INFERENCE_BATCH_SIZE", 16))
+    # Slices per forward pass. On CPU, larger batches only raise peak memory
+    # (measured: +110 MB at 16 vs +8 MB at 1, same speed); raise it on a GPU.
+    INFERENCE_BATCH_SIZE = int(os.environ.get("INFERENCE_BATCH_SIZE", 1))
 
     INIT_FIREBASE = True
     LOAD_MODEL = True
