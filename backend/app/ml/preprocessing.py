@@ -15,6 +15,10 @@ def normalize_ct(image: np.ndarray, intensity_properties: dict) -> np.ndarray:
 
 
 def resize_2d(image: np.ndarray, target_size) -> np.ndarray:
-    """Bilinear resize of a 2D array to `target_size` = [height, width]."""
+    """Bilinear resize of a 2D array to `target_size` = [height, width].
+
+    mode="nearest" extends the edges instead of padding with zeros, which would
+    otherwise blend the border pixels with 0 and drop the last row/column of a mask.
+    """
     factors = [target_size[0] / image.shape[0], target_size[1] / image.shape[1]]
-    return zoom(image, factors, order=1)
+    return zoom(image, factors, order=1, mode="nearest")

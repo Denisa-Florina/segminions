@@ -1,4 +1,8 @@
-"""Fallback used when the nnU-Net model is unavailable: produces a placeholder mask."""
+"""Fallback used when the nnU-Net model is unavailable: produces a placeholder mask.
+
+The result is clearly marked as simulated and reports no confidence; it must never
+be presented as a model prediction.
+"""
 
 import logging
 from io import BytesIO
@@ -11,11 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def simulate_metrics() -> dict:
-    return {
-        "confidence": 0.6,
-        "dice_score": round(0.75 + np.random.random() * 0.15, 2),
-        "iou_score": round(0.7 + np.random.random() * 0.15, 2),
-    }
+    return {"confidence": 0.0, "simulated": True}
 
 
 def simulate_segmentation(nifti_stream: BytesIO) -> tuple[dict, BytesIO]:

@@ -51,8 +51,10 @@ class SegmentationMetrics(BaseModel):
 
     confidence: float = 0
     voxel_count: int | None = None
+    volume_mm3: float | None = None
     coverage: float | None = None
     artery_detected: bool | None = None
+    simulated: bool = False
 
 
 class PatientSummary(BaseModel):

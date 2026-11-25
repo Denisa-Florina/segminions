@@ -51,27 +51,32 @@ class Segmenter:
         inputs = np.stack(
             [resize_2d(normalized[:, :, i], patch_size) for i in range(num_slices)]
         ).astype(np.float32)
-        predictions = self._predict(inputs)
 
-        mask = np.stack(
-            [resize_2d(p.astype(np.float32), slice_shape) > 0.5 for p in predictions], axis=-1
-        ).astype(np.int16)
+        # Resample probabilities (not labels) back to the original size, then threshold.
+        probability = np.stack(
+            [np.clip(resize_2d(p, slice_shape), 0.0, 1.0) for p in self._predict(inputs)],
+            axis=-1,
+        )
+        mask = (probability > 0.5).astype(np.int16)
 
-        logger.info("Segmentation complete in %.1fs: %d voxels segmented",
-                    time.perf_counter() - started, int(np.sum(mask > 0)))
-        return calculate_metrics(mask), write_nifti(mask, image.affine)
+        voxel_volume_mm3 = float(np.prod(image.header.get_zooms()[:3]))
+        metrics = calculate_metrics(mask, probability, voxel_volume_mm3)
+        logger.info("Segmentation complete in %.1fs: %d voxels, confidence %.3f",
+                    time.perf_counter() - started, metrics["voxel_count"], metrics["confidence"])
+        return metrics, write_nifti(mask, image.affine)
 
     def _predict(self, slices: np.ndarray) -> np.ndarray:
-        """Predict label maps for (N, H, W) preprocessed slices, in batches."""
+        """Foreground probability maps for (N, H, W) preprocessed slices."""
         model = self._model
         results = []
         with torch.inference_mode():
             for start in range(0, len(slices), self._batch_size):
                 batch = torch.from_numpy(slices[start:start + self._batch_size])
-                output = model.network(batch.unsqueeze(1).to(model.device))
-                if output.shape[1] == 1:
-                    labels = (torch.sigmoid(output) > 0.5).squeeze(1)
+                logits = model.network(batch.unsqueeze(1).to(model.device))
+                if logits.shape[1] == 1:
+                    foreground = torch.sigmoid(logits[:, 0])
                 else:
-                    labels = torch.argmax(output, dim=1)
-                results.append(labels.cpu().numpy())
+                    # Any non-background class counts as foreground.
+                    foreground = 1.0 - torch.softmax(logits, dim=1)[:, 0]
+                results.append(foreground.cpu().numpy())
         return np.concatenate(results)
