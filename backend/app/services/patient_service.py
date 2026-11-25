@@ -9,6 +9,7 @@ from app.core.errors import NotFoundError, ValidationError
 from app.extensions import get_segmenter
 from app.ml.dicom_converter import DicomConversionError, NiftiScan, convert_dicom_series
 from app.repositories.patient_repository import PatientRepository
+from app.schemas.patient import PatientCreate
 from app.storage.file_storage import MASK, SCAN, FirestoreFileStorage, StoredFile
 
 logger = logging.getLogger(__name__)
@@ -62,8 +63,8 @@ class PatientService:
 
     # --- commands ----------------------------------------------------------
 
-    def create(self, name: str, age: int, doctor_id: str, dicom_files) -> dict:
-        base = {"name": name, "age": age, "doctor_id": str(doctor_id), "date": _today()}
+    def create(self, data: PatientCreate, dicom_files) -> dict:
+        base = {**data.model_dump(), "date": _today()}
 
         if not dicom_files:
             return self.patients.create({**base, "segmented": False, "metrics": {"confidence": 0}})

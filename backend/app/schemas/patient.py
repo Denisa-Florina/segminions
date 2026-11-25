@@ -1,46 +1,84 @@
-"""Input validation and output serialisation for patients."""
+"""Pydantic models for patient input validation and API responses."""
+
+from typing import Literal, TypeVar
+
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ValidationError as PydanticValidationError
+from pydantic.alias_generators import to_camel
 
 from app.core.errors import ValidationError
 
 MIN_AGE, MAX_AGE = 1, 150
-EDITABLE_FIELDS = {"name", "age"}
+MAX_NAME_LENGTH = 100
+
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
-def to_patient_summary(patient: dict, unsegmented_status: str = "processing") -> dict:
-    return {
-        "id": patient["id"],
-        "name": patient["name"],
-        "age": patient["age"],
-        "date": patient["date"],
-        "dicomFile": patient.get("dicom_file", ""),
-        "status": "completed" if patient.get("segmented") else unsegmented_status,
-        "confidence": patient.get("metrics", {}).get("confidence", 0),
-    }
-
-
-def to_patient_detail(patient: dict) -> dict:
-    return {**to_patient_summary(patient), "metrics": patient.get("metrics", {})}
-
-
-def parse_age(raw_age) -> int:
+def validate_input(model: type[ModelT], data: dict) -> ModelT:
+    """Validate request data, turning Pydantic errors into a 400 with a readable message."""
     try:
-        age = int(raw_age)
-    except (TypeError, ValueError):
-        raise ValidationError("Age must be a valid number") from None
-    if not MIN_AGE <= age <= MAX_AGE:
-        raise ValidationError(f"Age must be between {MIN_AGE} and {MAX_AGE}")
-    return age
+        return model.model_validate(data)
+    except PydanticValidationError as error:
+        first = error.errors()[0]
+        field = ".".join(str(part) for part in first["loc"]) or "body"
+        if first["type"] == "missing":
+            raise ValidationError(f"{field} is required") from None
+        raise ValidationError(f"{field}: {first['msg']}") from None
 
 
-def parse_new_patient(form, doctor_id: str | None) -> tuple[str, int, str]:
-    name = form.get("name")
-    raw_age = form.get("age")
-    if not name or not raw_age or not doctor_id:
-        raise ValidationError("Name, age, and doctor_id are required")
-    return name, parse_age(raw_age), doctor_id
+# --- Input -----------------------------------------------------------------
+
+class PatientCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=MAX_NAME_LENGTH)
+    age: int = Field(ge=MIN_AGE, le=MAX_AGE)
+    doctor_id: str = Field(min_length=1)
 
 
-def parse_patient_updates(data: dict | None) -> dict:
-    if not data:
-        raise ValidationError("No data provided")
-    return {key: value for key, value in data.items() if key in EDITABLE_FIELDS}
+class PatientUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
+
+    name: str | None = Field(default=None, min_length=1, max_length=MAX_NAME_LENGTH)
+    age: int | None = Field(default=None, ge=MIN_AGE, le=MAX_AGE)
+
+
+# --- Output ----------------------------------------------------------------
+
+class SegmentationMetrics(BaseModel):
+    # Keys stay snake_case and unknown keys are kept: the frontend reads them as stored.
+    model_config = ConfigDict(extra="allow")
+
+    confidence: float = 0
+    voxel_count: int | None = None
+    coverage: float | None = None
+    artery_detected: bool | None = None
+
+
+class PatientSummary(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    id: str
+    name: str
+    age: int
+    date: str
+    dicom_file: str = ""
+    status: Literal["completed", "processing", "pending"]
+    confidence: float = 0
+
+    @classmethod
+    def from_db(cls, patient: dict, unsegmented_status: str = "processing"):
+        metrics = patient.get("metrics") or {}
+        return cls.model_validate({
+            **patient,
+            "metrics": metrics,
+            "status": "completed" if patient.get("segmented") else unsegmented_status,
+            "confidence": metrics.get("confidence", 0),
+        })
+
+    def to_json(self) -> dict:
+        return self.model_dump(by_alias=True)
+
+
+class PatientDetail(PatientSummary):
+    metrics: SegmentationMetrics = Field(default_factory=SegmentationMetrics)

@@ -5,10 +5,11 @@ from flask import Blueprint, jsonify, request, send_file
 from app.core.errors import ValidationError
 from app.core.security import current_doctor_id
 from app.schemas.patient import (
-    parse_new_patient,
-    parse_patient_updates,
-    to_patient_detail,
-    to_patient_summary,
+    PatientCreate,
+    PatientDetail,
+    PatientSummary,
+    PatientUpdate,
+    validate_input,
 )
 from app.services.patient_service import patient_service
 from app.storage.file_storage import MASK, SCAN
@@ -22,22 +23,27 @@ def list_patients():
     if not doctor_id:
         raise ValidationError("doctor_id is required")
     patients = patient_service.list_for_doctor(doctor_id)
-    return jsonify({"patients": [to_patient_summary(p) for p in patients]}), 200
+    return jsonify({"patients": [PatientSummary.from_db(p).to_json() for p in patients]}), 200
 
 
 @patients_bp.get("/<patient_id>")
 def get_patient(patient_id):
     patient = patient_service.get(patient_id)
-    return jsonify({"patient": to_patient_detail(patient)}), 200
+    return jsonify({"patient": PatientDetail.from_db(patient).to_json()}), 200
 
 
 @patients_bp.post("/", strict_slashes=False)
 def create_patient():
-    name, age, doctor_id = parse_new_patient(request.form, current_doctor_id())
-    patient = patient_service.create(name, age, doctor_id, request.files.getlist("dicom_file"))
+    form = request.form.to_dict()
+    doctor_id = current_doctor_id()
+    if doctor_id:
+        form["doctor_id"] = doctor_id
+    data = validate_input(PatientCreate, form)
+
+    patient = patient_service.create(data, request.files.getlist("dicom_file"))
     return jsonify({
         "message": "Patient created successfully",
-        "patient": to_patient_summary(patient, unsegmented_status="pending"),
+        "patient": PatientSummary.from_db(patient, unsegmented_status="pending").to_json(),
     }), 201
 
 
@@ -49,8 +55,13 @@ def upload_dicom(patient_id):
 
 @patients_bp.put("/<patient_id>")
 def update_patient(patient_id):
-    updates = parse_patient_updates(request.get_json(silent=True))
-    patient = patient_service.update(patient_id, updates)
+    body = request.get_json(silent=True)
+    if not body:
+        raise ValidationError("No data provided")
+    updates = validate_input(PatientUpdate, body)
+
+    changes = updates.model_dump(exclude_unset=True, exclude_none=True)
+    patient = patient_service.update(patient_id, changes)
     return jsonify({"message": "Patient updated successfully", "patient": patient}), 200
 
 
