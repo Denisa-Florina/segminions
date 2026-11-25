@@ -22,6 +22,10 @@ class Config:
     )
 
     MODEL_DIR = Path(os.environ.get("MODEL_DIR", BASE_DIR / "ml_weights" / "nnunet"))
+    # PyTorch defaults to one thread per host core, which thrashes on small container
+    # CPU quotas (Render free tier: 0.1 CPU). Raise this on machines with dedicated cores.
+    TORCH_NUM_THREADS = int(os.environ.get("TORCH_NUM_THREADS", 1))
+    INFERENCE_BATCH_SIZE = int(os.environ.get("INFERENCE_BATCH_SIZE", 16))
 
     INIT_FIREBASE = True
     LOAD_MODEL = True

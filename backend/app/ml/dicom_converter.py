@@ -68,10 +68,11 @@ def _read_slices(files) -> tuple[list, list[str]]:
 
 
 def _stack_slices(slices) -> np.ndarray:
+    """Return a (rows, columns, slices) volume; slices are always on the last axis."""
     if len(slices) == 1:
         volume = slices[0].pixel_array
         if volume.ndim == 2:
-            volume = volume[np.newaxis, :, :]
+            volume = volume[:, :, np.newaxis]
     else:
         volume = np.stack([s.pixel_array for s in slices], axis=-1)
     return volume.astype(np.float32)

@@ -1,6 +1,7 @@
-"""Run segmentation on a NIfTI volume with the nnU-Net model (slice by slice, 2D)."""
+"""Run segmentation on a NIfTI volume with the nnU-Net 2D model."""
 
 import logging
+import time
 from io import BytesIO
 from pathlib import Path
 
@@ -17,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 class Segmenter:
-    def __init__(self, model_dir: Path):
+    def __init__(self, model_dir: Path, num_threads: int = 1, batch_size: int = 16):
+        torch.set_num_threads(num_threads)
+        self._batch_size = batch_size
         self._model: NnUnetModel | None = load_nnunet_model(model_dir)
         if self._model is None:
             logger.warning("AI model not available, segmentation will be SIMULATED")
@@ -37,34 +40,38 @@ class Segmenter:
             return simulate_segmentation(nifti_stream)
 
     def _run_model(self, nifti_stream: BytesIO) -> tuple[dict, BytesIO]:
-        model = self._model
+        started = time.perf_counter()
         image = read_nifti(nifti_stream)
         volume = image.get_fdata().astype(np.float32)
-        normalized = normalize_ct(volume, model.intensity_properties)
-        patch_size = model.config_2d["patch_size"]
+        normalized = normalize_ct(volume, self._model.intensity_properties)
+        slice_shape, num_slices = volume.shape[:2], volume.shape[-1]
 
-        logger.info("Running nnU-Net on volume %s (%d slices)", volume.shape, volume.shape[-1])
-        with torch.no_grad():
-            mask_slices = [
-                self._predict_slice(normalized[:, :, i], patch_size)
-                for i in range(normalized.shape[-1])
-            ]
-        mask = np.stack(mask_slices, axis=-1).astype(np.int16)
-        logger.info("Segmentation complete: %d voxels segmented", int(np.sum(mask > 0)))
+        logger.info("Running nnU-Net on volume %s (%d slices)", volume.shape, num_slices)
+        patch_size = self._model.config_2d["patch_size"]
+        inputs = np.stack(
+            [resize_2d(normalized[:, :, i], patch_size) for i in range(num_slices)]
+        ).astype(np.float32)
+        predictions = self._predict(inputs)
 
+        mask = np.stack(
+            [resize_2d(p.astype(np.float32), slice_shape) > 0.5 for p in predictions], axis=-1
+        ).astype(np.int16)
+
+        logger.info("Segmentation complete in %.1fs: %d voxels segmented",
+                    time.perf_counter() - started, int(np.sum(mask > 0)))
         return calculate_metrics(mask), write_nifti(mask, image.affine)
 
-    def _predict_slice(self, slice_2d: np.ndarray, patch_size) -> np.ndarray:
+    def _predict(self, slices: np.ndarray) -> np.ndarray:
+        """Predict label maps for (N, H, W) preprocessed slices, in batches."""
         model = self._model
-        resized = resize_2d(slice_2d, patch_size)
-        tensor = torch.from_numpy(resized).unsqueeze(0).unsqueeze(0).to(model.device)
-        output = model.network(tensor)
-
-        if output.shape[1] == 1:
-            prediction = (torch.sigmoid(output) > 0.5).long()
-        else:
-            prediction = torch.argmax(output, dim=1)
-
-        prediction = prediction.squeeze().cpu().numpy().astype(np.float32)
-        restored = resize_2d(prediction, slice_2d.shape)
-        return (restored > 0.5).astype(np.int16)
+        results = []
+        with torch.inference_mode():
+            for start in range(0, len(slices), self._batch_size):
+                batch = torch.from_numpy(slices[start:start + self._batch_size])
+                output = model.network(batch.unsqueeze(1).to(model.device))
+                if output.shape[1] == 1:
+                    labels = (torch.sigmoid(output) > 0.5).squeeze(1)
+                else:
+                    labels = torch.argmax(output, dim=1)
+                results.append(labels.cpu().numpy())
+        return np.concatenate(results)

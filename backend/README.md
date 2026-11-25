@@ -52,7 +52,7 @@ credentials or GPU.
 
 - Root directory: `backend`
 - Build command: `pip install -r requirements.txt`
-- Start command: `gunicorn wsgi:app`
+- Start command: `gunicorn wsgi:app --workers 1 --timeout 300` (one worker: the model is loaded once per worker and inference can take minutes on a small CPU)
 - Environment variables: `APP_ENV=production`, `SECRET_KEY`, `FIREBASE_SERVICE_ACCOUNT_JSON`, `FRONTEND_URL`
 
 ## Security

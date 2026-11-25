@@ -30,7 +30,11 @@ def init_segmenter(app) -> None:
     # Imported here so that torch is only loaded when the model is actually needed.
     from app.ml.inference import Segmenter
 
-    _segmenter = Segmenter(app.config["MODEL_DIR"])
+    _segmenter = Segmenter(
+        app.config["MODEL_DIR"],
+        num_threads=app.config["TORCH_NUM_THREADS"],
+        batch_size=app.config["INFERENCE_BATCH_SIZE"],
+    )
 
 
 def get_db():
