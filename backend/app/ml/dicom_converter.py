@@ -47,21 +47,23 @@ def convert_dicom_series(files) -> NiftiScan:
     size = len(stream.getbuffer())
     base_name = filenames[0].rsplit(".", 1)[0]
     filename = f"{base_name}_{len(slices)}slices.nii.gz"
-    logger.info("Converted %d slice(s) to %s (%.2f KB)", len(slices), filename, size / 1024)
+    logger.info("Converted %d slice(s) to NIfTI (%.2f KB)", len(slices), size / 1024)
     return NiftiScan(stream=stream, filename=filename, size=size)
 
 
 def _read_slices(files) -> tuple[list, list[str]]:
-    slices, filenames = [], []
+    slices, filenames, skipped = [], [], 0
     for file in files:
         filename = getattr(file, "filename", None) or "scan.dcm"
         if not filename.lower().endswith(".dcm"):
-            logger.warning("Skipping %s: not a .dcm file", filename)
+            skipped += 1
             continue
         file.seek(0)
         slices.append(pydicom.dcmread(BytesIO(file.read())))
         filenames.append(filename)
 
+    if skipped:
+        logger.warning("Skipped %d uploaded file(s) without a .dcm extension", skipped)
     if not slices:
         raise DicomConversionError("No valid DICOM files found. Please upload .dcm files.")
 

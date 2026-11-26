@@ -79,6 +79,7 @@ class PatientSummary(BaseModel):
             **patient,
             "metrics": metrics,
             "status": status,
+            "dicom_file": patient.get("filename") or patient.get("dicom_file") or "",
             "confidence": metrics.get("confidence", 0),
             "simulated": bool(metrics.get("simulated")),
         })

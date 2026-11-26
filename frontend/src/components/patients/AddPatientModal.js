@@ -81,7 +81,7 @@ function AddPatientModal({ onClose, onSuccess }) {
             <label className="block border-2 border-dashed border-gray-600 rounded-lg p-6 text-center hover:border-blue-500 transition cursor-pointer">
               <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
               <p className="text-sm text-gray-300">
-                {dicomFiles.length ? dicomFiles.length + 'fișiere încărcate' : 'Click pentru a încărca (opțional)'}
+                {dicomFiles.length ? dicomFiles.length + ' fișiere încărcate' : 'Click pentru a încărca (opțional)'}
               </p>
               <input
                 type="file"

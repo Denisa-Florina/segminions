@@ -51,6 +51,8 @@ def doctors(monkeypatch):
                         if doctor_id in store else None)
     monkeypatch.setattr(repo, "update_password_hash", lambda doctor_id, password_hash:
                         store[doctor_id].update(password=password_hash))
+    monkeypatch.setattr(repo, "update_email", lambda doctor_id, email:
+                        store[doctor_id].update(email=email))
     return store
 
 

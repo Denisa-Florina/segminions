@@ -1,70 +1,53 @@
-# Getting Started with Create React App
+# MedSeg AI – Frontend
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+React app for doctors: log in, manage patients, upload CT scans (DICOM) and download the
+AI segmentation. Talks to the Flask backend in `../backend`.
 
-## Available Scripts
+## Running locally
 
-In the project directory, you can run:
+```bash
+npm install
+npm start            # http://localhost:3000
+```
 
-### `npm start`
+By default the app calls the backend at `http://127.0.0.1:5001/api`. To use another
+backend, set `REACT_APP_API_URL` in `.env.local` (development) or
+`.env.production.local` (production builds), e.g.:
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+```
+REACT_APP_API_URL=https://medsegai.onrender.com/api
+```
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## Deploying (Firebase Hosting)
 
-### `npm test`
+```bash
+npm run build                     # uses .env.production.local
+firebase deploy --only hosting    # project "medsegai", see .firebaserc
+```
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+Check that the build points to the right backend before deploying: the API URL is
+baked into the bundle at build time.
 
-### `npm run build`
+## Structure
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+```
+src/
+├── components/
+│   ├── auth/          LoginScreen
+│   ├── dashboard/     Dashboard (state, polling), DashboardView, Sidebar
+│   ├── patients/      PatientsView, PatientProfile, AddPatientModal,
+│   │                  StatusBadge, ConfidenceValue
+│   └── settings/      SettingsView
+├── contexts/          AuthContext (logged-in doctor)
+└── services/          api (axios + JWT header), authService, patientService
+```
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+## How it talks to the backend
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
-
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+- **Authentication:** login returns a JWT, stored in `localStorage` and sent as
+  `Authorization: Bearer <token>` on every request. A `401` logs the user out.
+- **Segmentation is asynchronous:** an upload returns immediately with status
+  `processing`; the patient page and the list poll until it becomes `completed` or
+  `failed`.
+- **Simulated results** (when the backend runs without the AI model) are shown with a
+  warning badge instead of a confidence value.

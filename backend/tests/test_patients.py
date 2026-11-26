@@ -181,3 +181,11 @@ def test_patient_detail_keeps_metrics_as_stored():
 def test_patient_without_metrics():
     patient = {**PATIENT, "metrics": None, "segmented": False}
     assert PatientDetail.from_db(patient).to_json()["confidence"] == 0
+
+
+def test_scan_file_name_is_exposed_as_dicom_file():
+    # The scan's name is stored as `filename`; the API used to read `dicom_file` only,
+    # so the field was always empty.
+    patient = {**PATIENT, "filename": "IMG0001_16slices.nii.gz"}
+    patient.pop("dicom_file")
+    assert PatientSummary.from_db(patient).to_json()["dicomFile"] == "IMG0001_16slices.nii.gz"

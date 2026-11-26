@@ -4,6 +4,7 @@ from flask import Blueprint, jsonify, request, send_file
 
 from app.core.errors import ValidationError
 from app.core.security import current_doctor_id, require_authentication
+from app.ml.nifti_io import ensure_gzipped
 from app.schemas.patient import (
     PatientCreate,
     PatientDetail,
@@ -102,6 +103,8 @@ def download_both(patient_id):
 
 
 def _send_gzip(data: bytes, filename: str):
+    # Files stored by earlier versions are uncompressed despite their .nii.gz name.
     return send_file(
-        io.BytesIO(data), mimetype="application/gzip", as_attachment=True, download_name=filename
+        io.BytesIO(ensure_gzipped(data)), mimetype="application/gzip",
+        as_attachment=True, download_name=filename,
     )

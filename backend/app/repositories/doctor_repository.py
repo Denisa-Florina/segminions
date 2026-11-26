@@ -23,3 +23,6 @@ class DoctorRepository:
 
     def update_password_hash(self, doctor_id: str, password_hash: str) -> None:
         self._collection().document(doctor_id).update({"password": password_hash})
+
+    def update_email(self, doctor_id: str, email: str) -> None:
+        self._collection().document(doctor_id).update({"email": email})
