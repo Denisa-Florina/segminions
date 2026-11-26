@@ -154,7 +154,7 @@ PATIENT = {
 def test_patient_summary_json_uses_camel_case():
     assert PatientSummary.from_db(PATIENT).to_json() == {
         "id": "p1", "name": "Ion", "age": 40, "date": "2026-11-25",
-        "dicomFile": "scan.dcm", "status": "completed", "confidence": 0.8,
+        "dicomFile": "scan.dcm", "status": "completed", "confidence": 0.8, "simulated": False,
     }
 
 

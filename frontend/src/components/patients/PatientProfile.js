@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, Upload, FileText, CheckCircle, ArrowLeft, Download } from 'lucide-react';
 import patientService from '../../services/patientService';
+import ConfidenceValue from './ConfidenceValue';
 
 function PatientProfile({ patient, onBack, onUpdate }) {
   const [uploading, setUploading] = useState(false);
@@ -102,9 +103,11 @@ function PatientProfile({ patient, onBack, onUpdate }) {
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Confidence:</span>
-                <span className="text-white font-medium">
-                  {((patient.confidence || 0) * 100).toFixed(1)}%
-                </span>
+                <ConfidenceValue
+                  confidence={patient.confidence}
+                  simulated={patient.simulated}
+                  className="text-white font-medium"
+                />
               </div>
             </div>
           </div>
@@ -151,7 +154,11 @@ function PatientProfile({ patient, onBack, onUpdate }) {
                   <span className="text-green-400 font-medium">Segmentare completă!</span>
                 </div>
                 <p className="text-sm text-gray-300">
-                  Confidence: {((uploadResult.confidence || 0) * 100).toFixed(1)}%
+                  Confidence:{' '}
+                  <ConfidenceValue
+                    confidence={uploadResult.confidence}
+                    simulated={uploadResult.metrics?.simulated}
+                  />
                 </p>
               </div>
             )}
@@ -174,7 +181,7 @@ function PatientProfile({ patient, onBack, onUpdate }) {
               <div className="bg-gray-700/50 rounded-lg p-4">
                 <p className="text-sm text-gray-400 mb-1">Confidence Score</p>
                 <p className="text-2xl font-bold text-white">
-                  {((patient.confidence || 0) * 100).toFixed(1)}%
+                  <ConfidenceValue confidence={patient.confidence} simulated={patient.simulated} />
                 </p>
               </div>
               {/* <div className="bg-gray-700/50 rounded-lg p-4">

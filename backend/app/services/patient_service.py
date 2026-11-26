@@ -14,6 +14,7 @@ from flask import current_app
 from app.core.errors import NotFoundError, ValidationError
 from app.extensions import get_segmenter
 from app.ml.dicom_converter import DicomConversionError, NiftiScan, convert_dicom_series
+from app.ml.errors import InvalidScanError
 from app.repositories.patient_repository import PatientRepository
 from app.schemas.patient import PatientCreate
 from app.storage.file_storage import MASK, SCAN, FirestoreFileStorage, StoredFile
@@ -80,7 +81,7 @@ class PatientService:
             return self.patients.create({**base, "segmented": False, "metrics": {"confidence": 0}})
 
         scan = self._convert(dicom_files)
-        metrics, mask_stream = self._segmenter_provider().segment(scan.stream)
+        metrics, mask_stream = self._segment(scan.stream)
 
         patient = self.patients.create({
             **base,
@@ -101,7 +102,7 @@ class PatientService:
         self.get(patient_id, doctor_id)
 
         scan = self._convert(dicom_files)
-        metrics, mask_stream = self._segmenter_provider().segment(scan.stream)
+        metrics, mask_stream = self._segment(scan.stream)
         self._store_results(patient_id, scan, mask_stream)
 
         date = _today()
@@ -124,7 +125,7 @@ class PatientService:
         patient = self.get(patient_id, doctor_id)
         scan = self.get_file(patient_id, doctor_id, SCAN, "Scan file not found")
 
-        metrics, mask_stream = self._segmenter_provider().segment(io.BytesIO(scan.data))
+        metrics, mask_stream = self._segment(io.BytesIO(scan.data))
         self.files.save(
             patient_id, mask_stream, _mask_filename(patient.get("filename", "scan.nii.gz")), MASK
         )
@@ -151,6 +152,12 @@ class PatientService:
         try:
             return convert_dicom_series(dicom_files)
         except DicomConversionError as error:
+            raise ValidationError(str(error)) from error
+
+    def _segment(self, stream) -> tuple[dict, io.BytesIO]:
+        try:
+            return self._segmenter_provider().segment(stream)
+        except InvalidScanError as error:
             raise ValidationError(str(error)) from error
 
     def _store_results(self, patient_id: str, scan: NiftiScan, mask_stream) -> None:

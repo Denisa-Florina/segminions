@@ -1,4 +1,9 @@
-"""Convert a series of uploaded DICOM slices into a single NIfTI volume."""
+"""Convert a series of uploaded DICOM slices into a single NIfTI volume in Hounsfield units.
+
+The volume follows the NIfTI voxel convention: axis 0 = columns (x), axis 1 = rows (y),
+axis 2 = slices (z). This is the same layout as any `.nii.gz` file, so scans converted
+here and scans saved by other tools are handled identically downstream.
+"""
 
 import logging
 from dataclasses import dataclass
@@ -6,6 +11,7 @@ from io import BytesIO
 
 import numpy as np
 import pydicom
+from pydicom.pixel_data_handlers.util import apply_modality_lut
 
 from app.ml.nifti_io import write_nifti
 
@@ -28,7 +34,7 @@ def convert_dicom_series(files) -> NiftiScan:
     try:
         slices, filenames = _read_slices(files)
         volume = _stack_slices(slices)
-        affine = _build_affine(slices[0])
+        affine = _build_affine(slices)
     except DicomConversionError:
         raise
     except Exception as error:
@@ -67,22 +73,34 @@ def _read_slices(files) -> tuple[list, list[str]]:
     return slices, filenames
 
 
+def _to_hounsfield(dicom_slice) -> np.ndarray:
+    """Stored pixel values -> HU using RescaleSlope / RescaleIntercept (modality LUT)."""
+    return apply_modality_lut(dicom_slice.pixel_array, dicom_slice).astype(np.float32)
+
+
 def _stack_slices(slices) -> np.ndarray:
-    """Return a (rows, columns, slices) volume; slices are always on the last axis."""
-    if len(slices) == 1:
-        volume = slices[0].pixel_array
-        if volume.ndim == 2:
-            volume = volume[:, :, np.newaxis]
-    else:
-        volume = np.stack([s.pixel_array for s in slices], axis=-1)
-    return volume.astype(np.float32)
+    """Return a (columns, rows, slices) volume in HU."""
+    # pixel_array is (rows, columns); transpose to NIfTI's (x, y).
+    planes = [_to_hounsfield(s).T for s in slices]
+    if any(plane.ndim != 2 for plane in planes):
+        raise DicomConversionError("Multi-frame DICOM files are not supported.")
+    return np.stack(planes, axis=-1)
 
 
-def _build_affine(reference_slice) -> np.ndarray:
-    pixel_spacing = reference_slice.PixelSpacing
-    slice_thickness = float(getattr(reference_slice, "SliceThickness", 1.0))
-    affine = np.eye(4)
-    affine[0, 0] = pixel_spacing[0]
-    affine[1, 1] = pixel_spacing[1]
-    affine[2, 2] = slice_thickness
-    return affine
+def _slice_spacing(slices) -> float:
+    """Distance between slice centres; falls back to SliceThickness for a single slice."""
+    if len(slices) > 1:
+        try:
+            positions = [float(s.ImagePositionPatient[2]) for s in slices]
+            spacing = float(np.median(np.abs(np.diff(positions))))
+            if spacing > 0:
+                return spacing
+        except (AttributeError, IndexError):
+            pass
+    return float(getattr(slices[0], "SliceThickness", 1.0) or 1.0)
+
+
+def _build_affine(slices) -> np.ndarray:
+    # PixelSpacing is [row spacing (y), column spacing (x)].
+    row_spacing, column_spacing = (float(v) for v in slices[0].PixelSpacing)
+    return np.diag([column_spacing, row_spacing, _slice_spacing(slices), 1.0])

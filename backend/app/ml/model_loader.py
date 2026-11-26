@@ -20,6 +20,7 @@ class NnUnetModel:
     plans: dict
     dataset: dict
     device: torch.device
+    mirroring_axes: tuple[int, ...] = ()
 
     @property
     def config_2d(self) -> dict:
@@ -28,6 +29,14 @@ class NnUnetModel:
     @property
     def intensity_properties(self) -> dict:
         return self.plans["foreground_intensity_properties_per_channel"]["0"]
+
+    @property
+    def patch_size(self) -> tuple[int, int]:
+        return tuple(self.config_2d["patch_size"])
+
+    @property
+    def target_spacing(self) -> tuple[float, float]:
+        return tuple(self.config_2d["spacing"])
 
 
 def load_nnunet_model(model_dir: Path) -> NnUnetModel | None:
@@ -44,7 +53,8 @@ def load_nnunet_model(model_dir: Path) -> NnUnetModel | None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         network = _build_network(plans["configurations"]["2d"], num_classes=len(dataset["labels"]))
-        network.load_state_dict(_load_state_dict(model_dir / CHECKPOINT_FILE, device))
+        state_dict, mirroring_axes = _load_checkpoint(model_dir / CHECKPOINT_FILE, device)
+        network.load_state_dict(state_dict)
         network.eval()
         network.to(device)
     except Exception:
@@ -53,7 +63,10 @@ def load_nnunet_model(model_dir: Path) -> NnUnetModel | None:
 
     logger.info("nnU-Net model loaded on %s (dataset %s, labels %s)",
                 device, plans["dataset_name"], dataset["labels"])
-    return NnUnetModel(network=network, plans=plans, dataset=dataset, device=device)
+    return NnUnetModel(
+        network=network, plans=plans, dataset=dataset, device=device,
+        mirroring_axes=mirroring_axes,
+    )
 
 
 def _build_network(config: dict, num_classes: int) -> torch.nn.Module:
@@ -80,15 +93,18 @@ def _build_network(config: dict, num_classes: int) -> torch.nn.Module:
     )
 
 
-def _load_state_dict(checkpoint_path: Path, device: torch.device) -> dict:
+def _load_checkpoint(checkpoint_path: Path, device: torch.device) -> tuple[dict, tuple]:
+    """Return (network weights, axes along which test-time mirroring is allowed)."""
     # weights_only=False is required for nnU-Net checkpoints; the file is our own.
     # mmap=True reads tensors from disk on demand, so the training-only parts of the
     # checkpoint (optimizer state, ~half the file) are never loaded into memory.
     checkpoint = torch.load(
         checkpoint_path, map_location=device, weights_only=False, mmap=True
     )
-    if isinstance(checkpoint, dict):
-        for key in ("network_weights", "state_dict"):
-            if key in checkpoint:
-                return checkpoint[key]
-    return checkpoint
+    if not isinstance(checkpoint, dict):
+        return checkpoint, ()
+    mirroring_axes = tuple(checkpoint.get("inference_allowed_mirroring_axes") or ())
+    for key in ("network_weights", "state_dict"):
+        if key in checkpoint:
+            return checkpoint[key], mirroring_axes
+    return checkpoint, mirroring_axes

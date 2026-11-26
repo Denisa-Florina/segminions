@@ -34,6 +34,9 @@ def init_segmenter(app) -> None:
         app.config["MODEL_DIR"],
         num_threads=app.config["TORCH_NUM_THREADS"],
         batch_size=app.config["INFERENCE_BATCH_SIZE"],
+        allow_simulation=app.config["ALLOW_SIMULATION"],
+        use_mirroring=app.config["INFERENCE_MIRRORING"],
+        max_patches=app.config["MAX_INFERENCE_PATCHES"],
     )
 
 

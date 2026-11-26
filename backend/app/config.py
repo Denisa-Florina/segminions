@@ -6,6 +6,11 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    return default if value is None else value.strip().lower() in {"1", "true", "yes"}
+
+
 class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY")
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50 MB per request
@@ -25,9 +30,18 @@ class Config:
     # PyTorch defaults to one thread per host core, which thrashes on small container
     # CPU quotas (Render free tier: 0.1 CPU). Raise this on machines with dedicated cores.
     TORCH_NUM_THREADS = int(os.environ.get("TORCH_NUM_THREADS", 1))
-    # Slices per forward pass. On CPU, larger batches only raise peak memory
+    # Patches per forward pass. On CPU, larger batches only raise peak memory
     # (measured: +110 MB at 16 vs +8 MB at 1, same speed); raise it on a GPU.
     INFERENCE_BATCH_SIZE = int(os.environ.get("INFERENCE_BATCH_SIZE", 1))
+    # Test-time mirroring averages 4 flipped predictions per patch (as nnU-Net does by
+    # default): slightly more accurate, 4x slower. Off by default for small CPUs.
+    INFERENCE_MIRRORING = _env_flag("INFERENCE_MIRRORING", False)
+    # Upper bound on model passes per scan (~0.05 s each locally, ~0.5 s on 0.1 CPU),
+    # so a large scan gets a clear error instead of a request timeout.
+    MAX_INFERENCE_PATCHES = int(os.environ.get("MAX_INFERENCE_PATCHES", 500))
+    # Placeholder masks when the model cannot be loaded. Never in production by default:
+    # the app refuses to start instead of showing fake results.
+    ALLOW_SIMULATION = _env_flag("ALLOW_SIMULATION", False)
 
     INIT_FIREBASE = True
     LOAD_MODEL = True
@@ -37,6 +51,7 @@ class Config:
 class DevelopmentConfig(Config):
     DEBUG = True
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-secret-key")
+    ALLOW_SIMULATION = _env_flag("ALLOW_SIMULATION", True)
 
 
 class ProductionConfig(Config):
@@ -48,6 +63,7 @@ class TestingConfig(Config):
     SECRET_KEY = "test-secret-key"
     INIT_FIREBASE = False
     LOAD_MODEL = False
+    ALLOW_SIMULATION = True
 
 
 _CONFIGS = {

@@ -67,6 +67,7 @@ class PatientSummary(BaseModel):
     dicom_file: str = ""
     status: Literal["completed", "processing", "pending"]
     confidence: float = 0
+    simulated: bool = False
 
     @classmethod
     def from_db(cls, patient: dict, unsegmented_status: str = "processing"):
@@ -76,6 +77,7 @@ class PatientSummary(BaseModel):
             "metrics": metrics,
             "status": "completed" if patient.get("segmented") else unsegmented_status,
             "confidence": metrics.get("confidence", 0),
+            "simulated": bool(metrics.get("simulated")),
         })
 
     def to_json(self) -> dict:

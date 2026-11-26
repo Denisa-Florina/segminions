@@ -35,11 +35,14 @@ function Dashboard() {
       setLoading(false);
     }
   };
+  // Average only over real AI results: unsegmented and simulated patients have no
+  // meaningful confidence.
+  const scored = patients.filter(p => p.status === 'completed' && !p.simulated);
   const stats = {
     totalPatients: patients.length,
     completed: patients.filter(p => p.status === 'completed').length,
-    avgConfidence: patients.length > 0 
-      ? (patients.reduce((sum, p) => sum + (p.confidence || 0), 0) / patients.length * 100).toFixed(1)
+    avgConfidence: scored.length > 0
+      ? (scored.reduce((sum, p) => sum + (p.confidence || 0), 0) / scored.length * 100).toFixed(1)
       : 0,
     thisMonth: patients.filter(p => {
       const pDate = new Date(p.date);

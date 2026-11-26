@@ -4,81 +4,154 @@ import numpy as np
 import pytest
 import torch
 
+from app.ml.errors import InvalidScanError
 from app.ml.inference import Segmenter
 from app.ml.metrics import calculate_metrics
 from app.ml.model_loader import NnUnetModel
 from app.ml.nifti_io import read_nifti, write_nifti
 
-FOREGROUND_LOGIT = 4.0   # softmax([0, 4])[1] = sigmoid(4) ≈ 0.982
-EXPECTED_PROBABILITY = float(torch.sigmoid(torch.tensor(FOREGROUND_LOGIT)))
+INTENSITY = {"percentile_00_5": -340, "percentile_99_5": 529, "mean": -17, "std": 148}
+BACKGROUND_HU, BRIGHT_HU = -300, 300   # normalise to about -1.9 and +2.1
 
 
-class LeftHalfNetwork(torch.nn.Module):
-    """Stub 2-class network: confident foreground in the left half of each slice."""
+class PixelwiseNetwork(torch.nn.Module):
+    """Stub 2-class network: a pixel is foreground when its normalised value is positive.
 
-    def __init__(self, empty: bool = False):
+    Being pixel-wise, it is unaffected by patch position or mirroring, so any change in
+    the output mask comes from the pipeline (orientation, resampling, stitching)."""
+
+    def __init__(self):
         super().__init__()
-        self.empty = empty
+        self.calls = 0
+        self.input_shapes = []
 
     def forward(self, x):
-        batch, _, height, width = x.shape
-        foreground = torch.full((batch, height, width), -FOREGROUND_LOGIT)
-        if not self.empty:
-            foreground[:, :, : width // 2] = FOREGROUND_LOGIT
-        background = torch.zeros_like(foreground)
-        return torch.stack([background, foreground], dim=1)
+        self.calls += 1
+        self.input_shapes.append(tuple(x.shape))
+        foreground = 5.0 * x[:, 0]
+        return torch.stack([torch.zeros_like(foreground), foreground], dim=1)
 
 
-def make_segmenter(network: torch.nn.Module) -> Segmenter:
-    segmenter = Segmenter(Path("does-not-exist"))
+class FailingNetwork(torch.nn.Module):
+    def forward(self, x):
+        raise RuntimeError("boom")
+
+
+def make_segmenter(network, **kwargs) -> Segmenter:
+    segmenter = Segmenter(Path("does-not-exist"), **kwargs)
     segmenter._model = NnUnetModel(
         network=network,
         plans={
-            "configurations": {"2d": {"patch_size": [56, 128]}},
-            "foreground_intensity_properties_per_channel": {"0": {
-                "percentile_00_5": -340, "percentile_99_5": 529, "mean": -17, "std": 148,
-            }},
+            "configurations": {"2d": {"patch_size": [56, 128], "spacing": [0.4, 0.4]}},
+            "foreground_intensity_properties_per_channel": {"0": INTENSITY},
         },
         dataset={"labels": {"background": 0, "tumor": 1}},
         device=torch.device("cpu"),
+        mirroring_axes=(0, 1),
     )
     return segmenter
 
 
-@pytest.fixture
-def scan():
-    volume = np.zeros((40, 60, 5), dtype=np.float32)
-    return write_nifti(volume, np.diag([0.5, 0.5, 2.0, 1.0]))   # voxel = 0.5 mm³
+def scan_with_bright_block(shape, spacing, block):
+    """NIfTI (x, y, z) volume with a bright box at `block` = (x slice, y slice)."""
+    volume = np.full(shape, BACKGROUND_HU, dtype=np.float32)
+    volume[block[0], block[1], :] = BRIGHT_HU
+    return write_nifti(volume, np.diag([*spacing, 1.0])), volume
 
 
-def test_confidence_is_the_mean_probability_of_segmented_voxels(scan):
-    metrics, mask_stream = make_segmenter(LeftHalfNetwork()).segment(scan)
-    mask = read_nifti(mask_stream).get_fdata()
-
-    assert mask.shape == (40, 60, 5)
-    assert mask[:, :28, :].all() and not mask[:, 32:, :].any()   # left half segmented
-    assert metrics["confidence"] == pytest.approx(EXPECTED_PROBABILITY, abs=0.02)
-    assert metrics["voxel_count"] == int(mask.sum())
-    assert metrics["volume_mm3"] == pytest.approx(metrics["voxel_count"] * 0.5)
-    assert "simulated" not in metrics
+def segment(segmenter, stream):
+    metrics, mask_stream = segmenter.segment(stream)
+    return metrics, read_nifti(mask_stream).get_fdata()
 
 
-def test_empty_prediction_reports_confidence_that_nothing_is_there(scan):
-    metrics, _ = make_segmenter(LeftHalfNetwork(empty=True)).segment(scan)
-    assert metrics["voxel_count"] == 0
-    assert metrics["volume_mm3"] == 0
-    assert metrics["confidence"] == pytest.approx(EXPECTED_PROBABILITY, abs=0.001)
+# --- orientation -----------------------------------------------------------
+
+def test_slices_enter_the_model_in_nnunet_orientation():
+    # A training-like crop: 119 voxels along x, 55 along y, at 0.4 mm.
+    # nnU-Net sees it as a (y=55, x=119) image, which fits in ONE 56x128 patch.
+    # With x and y swapped it would need 4 patches per slice.
+    network = PixelwiseNetwork()
+    stream, _ = scan_with_bright_block((119, 55, 3), (0.4, 0.4, 0.4), (slice(0, 1), slice(0, 1)))
+    segment(make_segmenter(network), stream)
+    assert network.calls == 3                       # one patch per slice
+    assert network.input_shapes[0] == (1, 1, 56, 128)
 
 
-def test_confidence_is_not_constant():
+def test_mask_is_returned_in_the_scan_orientation():
+    block = (slice(10, 30), slice(5, 20))           # x 10-29, y 5-19
+    stream, volume = scan_with_bright_block((60, 40, 2), (0.4, 0.4, 2.0), block)
+    metrics, mask = segment(make_segmenter(PixelwiseNetwork()), stream)
+
+    expected = (volume == BRIGHT_HU).astype(float)
+    assert mask.shape == volume.shape
+    assert np.array_equal(mask, expected)
+    assert metrics["voxel_count"] == 20 * 15 * 2
+    assert metrics["volume_mm3"] == pytest.approx(600 * 0.4 * 0.4 * 2.0)
+    assert metrics["confidence"] > 0.99
+
+
+# --- resampling and sliding window ----------------------------------------
+
+def test_slices_are_resampled_to_the_training_spacing():
+    # 0.8 mm pixels -> resampled to 0.4 mm, i.e. twice the size, before prediction.
+    network = PixelwiseNetwork()
+    block = (slice(20, 40), slice(20, 40))
+    stream, volume = scan_with_bright_block((60, 60, 1), (0.8, 0.8, 1.0), block)
+    _, mask = segment(make_segmenter(network), stream)
+
+    # Resampled slice is 120x120: 4 windows along y (56) x 1 along x (128, padded).
+    assert network.calls == 4
+    assert mask.shape == volume.shape
+    assert mask[22:38, 22:38, 0].all()              # block interior found
+    assert not mask[:15, :, 0].any() and not mask[45:, :, 0].any()
+
+
+def test_mirroring_runs_four_flipped_passes_per_patch():
+    network = PixelwiseNetwork()
+    block = (slice(10, 30), slice(5, 20))
+    stream, volume = scan_with_bright_block((60, 40, 1), (0.4, 0.4, 1.0), block)
+    _, mask = segment(make_segmenter(network, use_mirroring=True), stream)
+    assert network.calls == 4                       # identity, flip y, flip x, flip both
+    assert np.array_equal(mask, (volume == BRIGHT_HU).astype(float))
+
+
+def test_scan_needing_too_many_passes_is_rejected():
+    stream, _ = scan_with_bright_block((60, 40, 3), (0.4, 0.4, 1.0), (slice(0, 1), slice(0, 1)))
+    with pytest.raises(InvalidScanError, match="Scan too large"):
+        make_segmenter(PixelwiseNetwork(), max_patches=2).segment(stream)
+
+
+# --- confidence ------------------------------------------------------------
+
+def test_empty_prediction_reports_confidence_that_nothing_is_there():
+    stream, _ = scan_with_bright_block((60, 40, 2), (0.4, 0.4, 1.0), (slice(0, 0), slice(0, 0)))
+    metrics, mask = segment(make_segmenter(PixelwiseNetwork()), stream)
+    assert metrics["voxel_count"] == 0 and not mask.any()
+    assert metrics["confidence"] > 0.99
+
+
+def test_confidence_is_the_mean_probability_of_segmented_voxels():
     mask = np.zeros((4, 4, 1), dtype=np.int16)
     mask[:2] = 1
-    unsure = np.full(mask.shape, 0.55)
-    sure = np.full(mask.shape, 0.99)
-    assert calculate_metrics(mask, unsure, 1.0)["confidence"] == pytest.approx(0.55)
-    assert calculate_metrics(mask, sure, 1.0)["confidence"] == pytest.approx(0.99)
+    for probability in (0.55, 0.99):
+        metrics = calculate_metrics(mask, np.full(mask.shape, probability), 1.0)
+        assert metrics["confidence"] == pytest.approx(probability)
 
 
-def test_missing_model_falls_back_to_clearly_marked_simulation(scan):
-    metrics, _ = Segmenter(Path("does-not-exist")).segment(scan)
+# --- no silent fake results -----------------------------------------------
+
+def test_inference_errors_are_raised_not_replaced_by_a_fake_mask():
+    stream, _ = scan_with_bright_block((60, 40, 1), (0.4, 0.4, 1.0), (slice(0, 1), slice(0, 1)))
+    with pytest.raises(RuntimeError, match="boom"):
+        make_segmenter(FailingNetwork()).segment(stream)
+
+
+def test_missing_model_is_fatal_unless_simulation_is_allowed():
+    with pytest.raises(RuntimeError, match="ALLOW_SIMULATION"):
+        Segmenter(Path("does-not-exist"), allow_simulation=False)
+
+
+def test_allowed_simulation_is_clearly_marked():
+    stream, _ = scan_with_bright_block((60, 40, 1), (0.4, 0.4, 1.0), (slice(0, 1), slice(0, 1)))
+    metrics, _ = Segmenter(Path("does-not-exist"), allow_simulation=True).segment(stream)
     assert metrics == {"confidence": 0.0, "simulated": True}

@@ -67,6 +67,27 @@ credentials or GPU.
   and upgraded to bcrypt on the next successful login.
 - Login returns the same error for an unknown email and a wrong password.
 
+## Inference pipeline
+
+`app/ml/inference.py` reproduces nnU-Net's 2D inference without depending on the
+`nnunetv2` package (which pulls in many heavy dependencies):
+
+1. **DICOM → NIfTI** (`dicom_converter.py`): stored values are converted to Hounsfield
+   units (`RescaleSlope` / `RescaleIntercept`), axes follow the NIfTI convention
+   (x = columns, y = rows, z = slices), and the slice spacing comes from the slice positions.
+2. **Orientation:** nnU-Net reads images with SimpleITK (arrays indexed z, y, x), nibabel
+   uses x, y, z, so each slice is transposed to (y, x) before the model and back after.
+3. **Normalisation** with the dataset's CT intensity statistics from `plans.json`.
+4. **Resampling** of each slice to the training spacing (0.4 mm).
+5. **Sliding window** over 56×128 patches with 50% overlap and Gaussian weighting
+   (`sliding_window.py`), optionally with test-time mirroring.
+6. Logits are resampled back to the original slice size, converted to probabilities and
+   thresholded at 0.5.
+
+If the model cannot be loaded the app refuses to start, unless `ALLOW_SIMULATION=true`
+(default in development), in which case results are explicitly marked `simulated`.
+Inference errors are returned as errors, never replaced by a placeholder mask.
+
 ## API
 
 | Method | Endpoint | Description |
@@ -91,15 +112,18 @@ credentials or GPU.
 - **Token revocation:** tokens are stateless, so logout cannot invalidate a token before it
   expires. A short TTL with refresh tokens, or a deny-list, would address this.
 - **No rate limiting** on login yet (e.g. Flask-Limiter).
-- **Confidence** is the mean softmax probability over the segmented voxels. Softmax
-  probabilities are not calibrated; test-time augmentation (mirroring) or an ensemble of
-  the 5 nnU-Net folds would give a better uncertainty estimate.
-- **Input domain:** the model was trained on ~2×2×5 cm crops at 0.4 mm. Whole CT slices
-  are resized to the 56×128 patch, which shrinks the target structure; a localisation and
-  cropping step before segmentation is needed for full scans.
+- **Confidence** is the mean softmax probability over the segmented voxels, so it is
+  always ≥ 50% and says nothing about missed regions. Softmax probabilities are not
+  calibrated; mirroring (`INFERENCE_MIRRORING`) or an ensemble of the 5 nnU-Net folds
+  would give a better uncertainty estimate (only fold 0 is shipped).
+- **Input domain:** the model was trained on ~2×2×5 cm crops at 0.4 mm. Whole CT scans
+  are processed correctly but slowly (hundreds of patches per slice) and contain anatomy
+  the model never saw; a localisation and cropping step is needed for full scans.
+- **Inference cost:** each scan is limited to `MAX_INFERENCE_PATCHES` model passes
+  (default 500, about 4 minutes on a 0.1 CPU instance); larger scans get a 400 error.
 - **File storage:** scans are stored as base64 in Firestore; Cloud Storage is the target.
 - **Synchronous inference:** segmentation runs inside the request; a background job queue
   is planned for large scans.
-- **Preprocessing** is a simplified version of nnU-Net's pipeline (no resampling to target
-  spacing, no sliding window).
+- **Orientation:** DICOM direction cosines (`ImageOrientationPatient`) are not applied;
+  slices are assumed axial and in the standard row/column order.
 - This is a research prototype, not a validated medical device.

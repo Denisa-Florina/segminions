@@ -1,5 +1,17 @@
-"""Run segmentation on a NIfTI volume with the nnU-Net 2D model."""
+"""Run segmentation on a NIfTI volume with the nnU-Net 2D model.
 
+Mirrors nnU-Net's 2D inference:
+1. slices are taken along the volume's last axis (z) and transposed from NIfTI's
+   (x, y) to nnU-Net's (y, x) order (nnU-Net reads images with SimpleITK, whose arrays
+   are indexed z, y, x — the reverse of nibabel's x, y, z);
+2. CT normalisation with the dataset's intensity statistics;
+3. each slice is resampled to the training spacing (0.4 mm);
+4. sliding-window prediction with Gaussian weighting (optionally with mirroring);
+5. logits are resampled back to the original slice size, then converted to
+   probabilities and thresholded.
+"""
+
+import itertools
 import logging
 import time
 from io import BytesIO
@@ -8,21 +20,39 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from app.ml.errors import InvalidScanError
 from app.ml.metrics import calculate_metrics
 from app.ml.model_loader import NnUnetModel, load_nnunet_model
 from app.ml.nifti_io import read_nifti, write_nifti
-from app.ml.preprocessing import normalize_ct, resize_2d
+from app.ml.preprocessing import normalize_ct, resampled_shape, resize_2d
 from app.ml.simulation import simulate_segmentation
+from app.ml.sliding_window import count_patches, predict_sliding_window
 
 logger = logging.getLogger(__name__)
 
 
 class Segmenter:
-    def __init__(self, model_dir: Path, num_threads: int = 1, batch_size: int = 1):
+    def __init__(
+        self,
+        model_dir: Path,
+        num_threads: int = 1,
+        batch_size: int = 1,
+        allow_simulation: bool = True,
+        use_mirroring: bool = False,
+        max_patches: int = 500,
+    ):
         torch.set_num_threads(num_threads)
         self._batch_size = batch_size
+        self._use_mirroring = use_mirroring
+        self._max_patches = max_patches
         self._model: NnUnetModel | None = load_nnunet_model(model_dir)
+
         if self._model is None:
+            if not allow_simulation:
+                raise RuntimeError(
+                    f"nnU-Net model could not be loaded from {model_dir}. "
+                    "Set ALLOW_SIMULATION=true to run with placeholder masks instead."
+                )
             logger.warning("AI model not available, segmentation will be SIMULATED")
 
     @property
@@ -30,53 +60,88 @@ class Segmenter:
         return self._model is not None
 
     def segment(self, nifti_stream: BytesIO) -> tuple[dict, BytesIO]:
-        """Return (metrics, mask as NIfTI stream) for the given scan."""
+        """Return (metrics, mask as NIfTI stream). Inference errors are raised, never
+        replaced by a placeholder mask."""
         if self._model is None:
             return simulate_segmentation(nifti_stream)
-        try:
-            return self._run_model(nifti_stream)
-        except Exception:
-            logger.exception("nnU-Net inference failed")
-            return simulate_segmentation(nifti_stream)
+        return self._run_model(nifti_stream)
+
+    # --- pipeline ----------------------------------------------------------
 
     def _run_model(self, nifti_stream: BytesIO) -> tuple[dict, BytesIO]:
         started = time.perf_counter()
+        model = self._model
         image = read_nifti(nifti_stream)
-        volume = image.get_fdata().astype(np.float32)
-        normalized = normalize_ct(volume, self._model.intensity_properties)
-        slice_shape, num_slices = volume.shape[:2], volume.shape[-1]
+        volume = self._as_3d(image.get_fdata(dtype=np.float32))
+        zooms = tuple(float(z) for z in image.header.get_zooms()[:3])
+        zooms += (1.0,) * (3 - len(zooms))
 
-        logger.info("Running nnU-Net on volume %s (%d slices)", volume.shape, num_slices)
-        patch_size = self._model.config_2d["patch_size"]
-        inputs = np.stack(
-            [resize_2d(normalized[:, :, i], patch_size) for i in range(num_slices)]
-        ).astype(np.float32)
+        # One 2D slice in nnU-Net order: (rows = y, columns = x).
+        slice_shape = (volume.shape[1], volume.shape[0])
+        slice_spacing = (zooms[1], zooms[0])
+        work_shape = resampled_shape(slice_shape, slice_spacing, model.target_spacing)
+        num_slices = volume.shape[2]
+        self._check_size(work_shape, num_slices)
 
-        # Resample probabilities (not labels) back to the original size, then threshold.
-        probability = np.stack(
-            [np.clip(resize_2d(p, slice_shape), 0.0, 1.0) for p in self._predict(inputs)],
-            axis=-1,
-        )
+        logger.info("Running nnU-Net on volume %s, spacing %s mm -> slices resampled to %s",
+                    volume.shape, zooms, work_shape)
+        normalized = normalize_ct(volume, model.intensity_properties)
+        probability = np.empty(volume.shape, dtype=np.float32)
+        for k in range(num_slices):
+            slice_yx = resize_2d(normalized[:, :, k].T, work_shape, order=3)
+            logits = predict_sliding_window(
+                slice_yx, model.patch_size, self._predict_patches, self._batch_size
+            )
+            logits = resize_2d(logits, slice_shape, order=1)
+            probability[:, :, k] = _foreground_probability(logits).T
+
         mask = (probability > 0.5).astype(np.int16)
-
-        voxel_volume_mm3 = float(np.prod(image.header.get_zooms()[:3]))
-        metrics = calculate_metrics(mask, probability, voxel_volume_mm3)
+        metrics = calculate_metrics(mask, probability, float(np.prod(zooms)))
         logger.info("Segmentation complete in %.1fs: %d voxels, confidence %.3f",
                     time.perf_counter() - started, metrics["voxel_count"], metrics["confidence"])
         return metrics, write_nifti(mask, image.affine)
 
-    def _predict(self, slices: np.ndarray) -> np.ndarray:
-        """Foreground probability maps for (N, H, W) preprocessed slices."""
+    @staticmethod
+    def _as_3d(volume: np.ndarray) -> np.ndarray:
+        if volume.ndim == 2:
+            return volume[:, :, np.newaxis]
+        if volume.ndim != 3:
+            raise InvalidScanError(f"Expected a 3D scan, got {volume.ndim} dimensions")
+        return volume
+
+    def _mirror_variants(self) -> list[tuple[int, ...]]:
+        axes = self._model.mirroring_axes if self._use_mirroring else ()
+        return [c for r in range(len(axes) + 1) for c in itertools.combinations(axes, r)]
+
+    def _check_size(self, work_shape, num_slices: int) -> None:
+        passes = (count_patches(work_shape, self._model.patch_size)
+                  * num_slices * len(self._mirror_variants()))
+        if passes > self._max_patches:
+            raise InvalidScanError(
+                f"Scan too large for this server: {passes} model passes needed, the limit "
+                f"is {self._max_patches}. Upload fewer slices or a cropped region of interest."
+            )
+
+    def _predict_patches(self, patches: np.ndarray) -> np.ndarray:
+        """(N, H, W) normalised patches -> (N, classes, H, W) logits, averaged over the
+        allowed mirror flips when mirroring is enabled."""
         model = self._model
-        results = []
+        inputs = torch.from_numpy(np.ascontiguousarray(patches)).unsqueeze(1).to(model.device)
+        variants = self._mirror_variants()
         with torch.inference_mode():
-            for start in range(0, len(slices), self._batch_size):
-                batch = torch.from_numpy(slices[start:start + self._batch_size])
-                logits = model.network(batch.unsqueeze(1).to(model.device))
-                if logits.shape[1] == 1:
-                    foreground = torch.sigmoid(logits[:, 0])
-                else:
-                    # Any non-background class counts as foreground.
-                    foreground = 1.0 - torch.softmax(logits, dim=1)[:, 0]
-                results.append(foreground.cpu().numpy())
-        return np.concatenate(results)
+            logits = None
+            for axes in variants:
+                dims = [axis + 2 for axis in axes]   # skip batch and channel dims
+                flipped = torch.flip(inputs, dims) if dims else inputs
+                output = model.network(flipped)
+                output = torch.flip(output, dims) if dims else output
+                logits = output if logits is None else logits + output
+        return (logits / len(variants)).cpu().numpy()
+
+
+def _foreground_probability(logits: np.ndarray) -> np.ndarray:
+    """(classes, H, W) logits -> probability that a pixel is not background."""
+    if logits.shape[0] == 1:
+        return 1.0 / (1.0 + np.exp(-logits[0]))
+    shifted = np.exp(logits - logits.max(axis=0, keepdims=True))
+    return 1.0 - shifted[0] / shifted.sum(axis=0)

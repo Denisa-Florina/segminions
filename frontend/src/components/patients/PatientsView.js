@@ -1,5 +1,6 @@
 import React from 'react';
 import { Plus, Search, User } from 'lucide-react';
+import ConfidenceValue from './ConfidenceValue';
 
 function PatientsView({ patients, searchTerm, setSearchTerm, onViewPatient, onAddPatient, loading }) {
   if (loading) {
@@ -89,7 +90,11 @@ function PatientsView({ patients, searchTerm, setSearchTerm, onViewPatient, onAd
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">Confidence:</span>
-                  <span className="text-white">{((patient.confidence || 0) * 100).toFixed(1)}%</span>
+                  <ConfidenceValue
+                    confidence={patient.confidence}
+                    simulated={patient.simulated}
+                    className="text-white"
+                  />
                 </div>
                 {patient.dicomFile && (
                   <div className="flex justify-between">
