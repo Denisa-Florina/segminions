@@ -44,12 +44,14 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = async () => {
+    // The local session ends even when the server cannot be reached: otherwise a
+    // network error would leave the doctor "logged in" with no way out.
     try {
       await authService.logout();
-      setDoctor(null);
-      localStorage.removeItem('authToken');
     } catch (err) {
       console.error('Logout error:', err);
+    } finally {
+      setDoctor(null);
     }
   };
 
@@ -65,10 +67,7 @@ export const AuthProvider = ({ children }) => {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-400">Loading...</p>
-        </div>
+        <div role="status" className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" aria-label="Loading" />
       </div>
     );
   }

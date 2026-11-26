@@ -65,10 +65,6 @@ class Segmenter:
                 )
             logger.warning("AI model not available, segmentation will be SIMULATED")
 
-    @property
-    def is_model_loaded(self) -> bool:
-        return self._model is not None
-
     def check_scan(self, nifti_stream: BytesIO) -> None:
         """Raise InvalidScanError if the scan cannot be segmented (checked up front, so
         the user gets the error immediately instead of after queueing)."""

@@ -10,11 +10,11 @@ import base64
 import logging
 import math
 from dataclasses import dataclass
-from datetime import datetime
 from io import BytesIO
 
 from firebase_admin import firestore
 
+from app.core.clock import utc_now
 from app.extensions import get_db
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ class FirestoreFileStorage:
             **updates,
             f"{key}_filename": filename,
             f"{key}_size": len(file_bytes),
-            "updated_at": datetime.now(),
+            "updated_at": utc_now(),
         })
 
     def load(self, patient_id: str, key: str) -> StoredFile | None:
@@ -115,7 +115,7 @@ class FirestoreFileStorage:
             chunks_ref.document(f"chunk_{index}").set({
                 "data": encoded[start:start + _CHUNK_SIZE],
                 "order": index,
-                "created_at": datetime.now(),
+                "created_at": utc_now(),
             })
 
     def _load_chunks(self, patient_id: str, key: str) -> str:

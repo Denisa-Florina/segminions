@@ -1,59 +1,102 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { User, Upload, CheckCircle, ArrowLeft, Download, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Link, useOutletContext, useParams } from 'react-router-dom';
+import { Upload, CheckCircle, ArrowLeft, Download, AlertTriangle, RefreshCw, SearchX } from 'lucide-react';
 import patientService from '../../services/patientService';
+import Avatar from '../common/Avatar';
+import Spinner from '../common/Spinner';
+import { Skeleton } from '../common/Skeleton';
 import ConfidenceValue from './ConfidenceValue';
+import SegmentationViewer from './SegmentationViewer';
 import StatusBadge from './StatusBadge';
+import { formatDate } from '../../lib/format';
 
 const POLL_INTERVAL_MS = 3000;
 
-function PatientProfile({ patient: initialPatient, onBack, onUpdate }) {
-  const [patient, setPatient] = useState(initialPatient);
+const DOWNLOADS = [
+  { kind: 'scan', label: 'CT scan (.nii.gz)', run: patientService.downloadScan, color: 'bg-blue-600 hover:bg-blue-700' },
+  { kind: 'mask', label: 'Segmentation (.nii.gz)', run: patientService.downloadMask, color: 'bg-green-600 hover:bg-green-700' },
+  { kind: 'both', label: 'Both (ZIP)', run: patientService.downloadBoth, color: 'bg-violet-600 hover:bg-violet-700' },
+];
+
+function ErrorBox({ children }) {
+  return (
+    <div role="alert" className="mt-4 bg-red-600/20 border border-red-500 rounded-lg p-4 text-sm text-red-300">
+      {children}
+    </div>
+  );
+}
+
+function InfoRow({ label, children }) {
+  return (
+    <div className="flex justify-between gap-4">
+      <dt className="text-gray-400">{label}</dt>
+      <dd className="text-white font-medium text-right">{children}</dd>
+    </div>
+  );
+}
+
+function PatientProfile() {
+  const { patientId } = useParams();
+  const { patients, reloadPatients } = useOutletContext();
+  // Start from the list's summary (if loaded) so the page renders immediately; the
+  // full patient (metrics, error message) is fetched below.
+  const summary = patients.find(p => p.id === patientId) || null;
+  const [patient, setPatient] = useState(summary);
+  const [notFound, setNotFound] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [requestError, setRequestError] = useState('');
-  const [downloading, setDownloading] = useState(false);
-  const isProcessing = patient.status === 'processing';
+  const [downloading, setDownloading] = useState(null); // kind being downloaded
+  const isProcessing = patient?.status === 'processing';
+  // Read through a ref so the effect below refetches only when the URL changes, not
+  // every time the list refreshes and `summary` becomes a new object.
+  const summaryRef = useRef(summary);
+  summaryRef.current = summary;
 
-  // Keep the latest callback without restarting the polling timer on every render.
-  const onUpdateRef = useRef(onUpdate);
-  useEffect(() => { onUpdateRef.current = onUpdate; }, [onUpdate]);
-
-  // The list only has a summary: load the full patient (metrics, error message).
   useEffect(() => {
-    setPatient(initialPatient);
-    patientService.getPatient(initialPatient.id)
-      .then(setPatient)
-      .catch(err => console.error('Error loading patient:', err));
-  }, [initialPatient]);
+    let cancelled = false;
+    setPatient(summaryRef.current);
+    setNotFound(false);
+    setRequestError('');
+    patientService.getPatient(patientId)
+      .then(full => { if (!cancelled) setPatient(full); })
+      .catch(err => {
+        if (cancelled) return;
+        // The API answers 404 both for a missing patient and for another doctor's.
+        if (err.status === 404) setNotFound(true);
+        else setRequestError(err.message);
+      });
+    return () => { cancelled = true; };
+  }, [patientId]);
 
   // Segmentation runs in the background: poll until it completes or fails.
   useEffect(() => {
     if (!isProcessing) return undefined;
     const timer = setInterval(async () => {
       try {
-        const latest = await patientService.getPatient(patient.id);
+        const latest = await patientService.getPatient(patientId);
         setPatient(latest);
-        if (latest.status !== 'processing') onUpdateRef.current();
+        if (latest.status !== 'processing') reloadPatients({ silent: true });
       } catch (err) {
         console.error('Error refreshing patient:', err);
       }
     }, POLL_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [isProcessing, patient.id]);
+  }, [isProcessing, patientId, reloadPatients]);
 
   const startProcessing = () => {
     setPatient(p => ({ ...p, status: 'processing', segmentationError: null }));
-    onUpdateRef.current();
+    reloadPatients({ silent: true });
   };
 
   const handleFileUpload = async (e) => {
     const files = Array.from(e.target.files);
-    e.target.value = '';   // allow selecting the same files again
+    e.target.value = ''; // allow selecting the same files again
     if (files.length === 0) return;
 
     setUploading(true);
     setRequestError('');
     try {
-      await patientService.uploadDicom(patient.id, files);
+      await patientService.uploadDicom(patientId, files);
       startProcessing();
     } catch (err) {
       setRequestError(err.message);
@@ -65,247 +108,204 @@ function PatientProfile({ patient: initialPatient, onBack, onUpdate }) {
   const handleResegment = async () => {
     setRequestError('');
     try {
-      await patientService.reSegmentPatient(patient.id);
+      await patientService.reSegmentPatient(patientId);
       startProcessing();
     } catch (err) {
       setRequestError(err.message);
     }
   };
 
-  const handleDownloadScan = async () => {
-    setDownloading(true);
+  const handleDownload = async ({ kind, run }) => {
+    setDownloading(kind);
+    setRequestError('');
     try {
-      await patientService.downloadScan(patient.id);
-    } catch (error) {
-      alert('Eroare la descărcarea scan-ului: ' + error.message);
+      await run(patientId);
+    } catch (err) {
+      setRequestError(`Download failed: ${err.message}`);
     } finally {
-      setDownloading(false);
+      setDownloading(null);
     }
   };
 
-  const handleDownloadMask = async () => {
-    setDownloading(true);
-    try {
-      await patientService.downloadMask(patient.id);
-    } catch (error) {
-      alert('Eroare la descărcarea segmentării: ' + error.message);
-    } finally {
-      setDownloading(false);
-    }
-  };
+  const backLink = (
+    <Link to="/patients" className="inline-flex items-center gap-2 text-gray-400 hover:text-white mb-6 transition">
+      <ArrowLeft className="w-5 h-5" aria-hidden="true" />
+      Back to patients
+    </Link>
+  );
 
-  const handleDownloadBoth = async () => {
-    setDownloading(true);
-    try {
-      await patientService.downloadBoth(patient.id);
-    } catch (error) {
-      alert('Eroare la descărcarea fișierelor: ' + error.message);
-    } finally {
-      setDownloading(false);
-    }
-  };
+  if (notFound) {
+    return (
+      <div className="p-8">
+        {backLink}
+        <div className="text-center py-16">
+          <SearchX className="w-16 h-16 text-gray-600 mx-auto mb-4" aria-hidden="true" />
+          <p className="text-xl text-white font-semibold mb-2">Patient not found</p>
+          <p className="text-gray-400">It may have been deleted, or the link is wrong.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!patient) {
+    return (
+      <div className="p-8">
+        {backLink}
+        {requestError ? <ErrorBox>{requestError}</ErrorBox> : (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <Skeleton className="h-80 rounded-xl" />
+            <Skeleton className="h-80 rounded-xl lg:col-span-2" />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const metrics = patient.metrics || {};
+  const busy = uploading || isProcessing;
 
   return (
     <div className="p-8">
-      <button
-        onClick={onBack}
-        className="flex items-center gap-2  bg-gray-900 text-gray-400 hover:text-white mb-6 transition"
-      >
-        <ArrowLeft className="w-5 h-5" />
-        Înapoi la pacienți
-      </button>
+      {backLink}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Patient Info */}
-        <div className="lg:col-span-1">
-          <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
-            <div className="text-center mb-6">
-              <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                <User className="w-12 h-12 text-white" />
-              </div>
-              <h2 className="text-2xl font-bold text-white mb-1">{patient.name}</h2>
-              <p className="text-gray-400">{patient.age} ani</p>
-            </div>
-
-            <div className="space-y-3 border-t border-gray-700 pt-6">
-              <div className="flex justify-between">
-                <span className="text-gray-400">ID Pacient:</span>
-                <span className="text-white font-medium">#{patient.id}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Data scanării:</span>
-                <span className="text-white font-medium">{patient.date}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Status:</span>
-                <StatusBadge status={patient.status} />
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Confidence:</span>
-                <ConfidenceValue
-                  confidence={patient.confidence}
-                  simulated={patient.simulated}
-                  className="text-white font-medium"
-                />
-              </div>
-            </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        {/* Patient info */}
+        <section className="bg-gray-800 border border-gray-700 rounded-xl p-6">
+          <div className="flex flex-col items-center text-center mb-6">
+            <div className="mb-4"><Avatar name={patient.name} size="lg" /></div>
+            <h2 className="text-2xl font-bold text-white mb-1">{patient.name}</h2>
+            <p className="text-gray-400">{patient.age} years</p>
           </div>
-        </div>
 
-        {/* Upload & Results */}
+          <dl className="space-y-3 border-t border-gray-700 pt-6 text-sm">
+            <InfoRow label="Patient ID"><span className="font-mono text-xs text-gray-300">{patient.id}</span></InfoRow>
+            <InfoRow label="Scan date">{formatDate(patient.date)}</InfoRow>
+            <InfoRow label="Status"><StatusBadge status={patient.status} /></InfoRow>
+            <InfoRow label="Confidence">
+              <ConfidenceValue confidence={patient.confidence} simulated={patient.simulated} status={patient.status} />
+            </InfoRow>
+            {patient.dicomFile && (
+              <InfoRow label="File">
+                <span className="block truncate max-w-[160px] text-gray-300" title={patient.dicomFile}>{patient.dicomFile}</span>
+              </InfoRow>
+            )}
+          </dl>
+        </section>
+
         <div className="lg:col-span-2 space-y-6">
-          {/* Upload Section */}
-          <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
-            <h3 className="text-xl font-bold text-white mb-4">
-              Încarcă fișiere DICOM pentru predicție
-            </h3>
+          {/* Upload */}
+          <section className="bg-gray-800 border border-gray-700 rounded-xl p-6">
+            <h3 className="text-xl font-bold text-white mb-4">Upload a DICOM series</h3>
 
-            <label className="block">
-              <div className="border-2 border-dashed border-gray-600 rounded-xl p-8 text-center hover:border-blue-500 transition cursor-pointer">
-                <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                <p className="text-white font-medium mb-2">
-                  {uploading ? 'Se încarcă scanarea...'
-                    : isProcessing ? 'Segmentare în curs...'
-                    : 'Click pentru a încărca fișier DICOM'}
-                </p>
-                <p className="text-sm text-gray-400">Formatul acceptat: .dcm</p>
-                <input
-                  type="file"
-                  accept=".dcm" multiple
-                  onChange={handleFileUpload}
-                  disabled={uploading || isProcessing}
-                  className="hidden"
-                />
-              </div>
+            {/* The input is visually hidden but still focusable, so the drop zone works
+                from the keyboard (Tab, then Enter or Space). */}
+            <label
+              className={`block border-2 border-dashed rounded-xl p-8 text-center transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/40 ${
+                busy ? 'border-gray-700 cursor-not-allowed opacity-60' : 'border-gray-600 hover:border-blue-500 cursor-pointer'
+              }`}
+            >
+              <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" aria-hidden="true" />
+              <p className="text-white font-medium mb-2">
+                {uploading ? 'Uploading scan…'
+                  : isProcessing ? 'Segmentation in progress…'
+                  : patient.status === 'pending' ? 'Click to choose DICOM files'
+                  : 'Click to upload a new scan'}
+              </p>
+              <p className="text-sm text-gray-400">Accepted format: .dcm (select all slices of the series)</p>
+              <input
+                type="file"
+                accept=".dcm"
+                multiple
+                onChange={handleFileUpload}
+                disabled={busy}
+                className="sr-only"
+              />
             </label>
 
-            {(uploading || isProcessing) && (
-              <div className="mt-4 bg-blue-600/20 border border-blue-500 rounded-lg p-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-blue-400">
-                    {uploading
-                      ? 'Se încarcă și se verifică scanarea...'
-                      : 'Segmentarea rulează în fundal și poate dura câteva minute. Poți părăsi pagina.'}
-                  </span>
-                </div>
+            {busy && (
+              <div role="status" className="mt-4 bg-blue-600/20 border border-blue-500 rounded-lg p-4 flex items-center gap-3">
+                <Spinner />
+                <span className="text-blue-300 text-sm">
+                  {uploading
+                    ? 'Uploading and checking the scan…'
+                    : 'Segmentation is running in the background and can take a few minutes. You can leave this page.'}
+                </span>
               </div>
             )}
 
-            {requestError && (
-              <div className="mt-4 bg-red-600/20 border border-red-500 rounded-lg p-4 text-sm text-red-300">
-                {requestError}
-              </div>
-            )}
+            {requestError && <ErrorBox>{requestError}</ErrorBox>}
 
             {patient.status === 'failed' && (
-              <div className="mt-4 bg-red-600/20 border border-red-500 rounded-lg p-4">
+              <div role="alert" className="mt-4 bg-red-600/20 border border-red-500 rounded-lg p-4">
                 <div className="flex items-center gap-3 mb-2">
-                  <AlertTriangle className="w-5 h-5 text-red-400" />
-                  <span className="text-red-400 font-medium">Segmentarea a eșuat</span>
+                  <AlertTriangle className="w-5 h-5 text-red-400" aria-hidden="true" />
+                  <span className="text-red-400 font-medium">Segmentation failed</span>
                 </div>
                 <p className="text-sm text-gray-300 mb-3">
-                  {patient.segmentationError || 'A apărut o eroare la procesare.'}
+                  {patient.segmentationError || 'An error occurred while processing the scan.'}
                 </p>
                 <button
+                  type="button"
                   onClick={handleResegment}
                   className="flex items-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition"
                 >
-                  <RefreshCw className="w-4 h-4" />
-                  Reîncearcă segmentarea
+                  <RefreshCw className="w-4 h-4" aria-hidden="true" />
+                  Retry segmentation
                 </button>
               </div>
             )}
+          </section>
 
-            {patient.status === 'completed' && (
-              <div className="mt-4 bg-green-600/20 border border-green-500 rounded-lg p-4">
-                <div className="flex items-center gap-3 mb-2">
-                  <CheckCircle className="w-5 h-5 text-green-400" />
-                  <span className="text-green-400 font-medium">Segmentare completă!</span>
+          {/* Results */}
+          {patient.status === 'completed' && (
+            <section className="bg-gray-800 border border-gray-700 rounded-xl p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <CheckCircle className="w-6 h-6 text-green-400" aria-hidden="true" />
+                <h3 className="text-xl font-bold text-white">Segmentation results</h3>
+              </div>
+
+              <SegmentationViewer patientId={patientId} />
+
+              <dl className="grid grid-cols-1 sm:grid-cols-3 gap-4 my-6">
+                <div className="bg-gray-700/50 rounded-lg p-4">
+                  <dt className="text-sm text-gray-400 mb-1">Confidence</dt>
+                  <dd className="text-2xl font-bold">
+                    <ConfidenceValue confidence={patient.confidence} simulated={patient.simulated} status={patient.status} />
+                  </dd>
                 </div>
-                <p className="text-sm text-gray-300">
-                  Confidence:{' '}
-                  <ConfidenceValue confidence={patient.confidence} simulated={patient.simulated} />
-                </p>
+                <div className="bg-gray-700/50 rounded-lg p-4">
+                  <dt className="text-sm text-gray-400 mb-1">Segmented volume</dt>
+                  <dd className="text-2xl font-bold text-white">
+                    {metrics.volume_mm3 != null
+                      ? `${metrics.volume_mm3.toLocaleString('en-US', { maximumFractionDigits: 1 })} mm³`
+                      : '—'}
+                  </dd>
+                </div>
+                <div className="bg-gray-700/50 rounded-lg p-4">
+                  <dt className="text-sm text-gray-400 mb-1">Segmented voxels</dt>
+                  <dd className="text-2xl font-bold text-white">
+                    {metrics.voxel_count != null ? metrics.voxel_count.toLocaleString('en-US') : '—'}
+                  </dd>
+                </div>
+              </dl>
+
+              <h4 className="text-sm font-semibold text-gray-400 mb-3">Download results</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {DOWNLOADS.map(download => (
+                  <button
+                    key={download.kind}
+                    type="button"
+                    onClick={() => handleDownload(download)}
+                    disabled={downloading !== null}
+                    className={`flex items-center justify-center gap-2 px-4 py-3 ${download.color} text-white rounded-lg transition font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed`}
+                  >
+                    {downloading === download.kind ? <Spinner className="w-4 h-4 border-2 border-white" /> : <Download className="w-4 h-4" aria-hidden="true" />}
+                    {download.label}
+                  </button>
+                ))}
               </div>
-            )}
-          </div>
-
-          {/* Results Section */}
-          <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
-            <h3 className="text-xl font-bold text-white mb-4">Rezultate Segmentare</h3>
-
-            {/* <div className="bg-gray-700/50 rounded-lg p-4 mb-4">
-              <div className="aspect-video bg-gray-900 rounded-lg flex items-center justify-center">
-                <FileText className="w-16 h-16 text-gray-600" />
-              </div>
-              <p className="text-sm text-gray-400 mt-2 text-center">
-                Vizualizare rezultate segmentare
-              </p>
-            </div> */}
-
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <div className="bg-gray-700/50 rounded-lg p-4">
-                <p className="text-sm text-gray-400 mb-1">Confidence Score</p>
-                <p className="text-2xl font-bold text-white">
-                  <ConfidenceValue confidence={patient.confidence} simulated={patient.simulated} />
-                </p>
-              </div>
-              <div className="bg-gray-700/50 rounded-lg p-4">
-                <p className="text-sm text-gray-400 mb-1">Volum segmentat</p>
-                <p className="text-2xl font-bold text-white">
-                  {patient.metrics?.volume_mm3 != null
-                    ? `${patient.metrics.volume_mm3.toLocaleString('ro-RO')} mm³`
-                    : '—'}
-                </p>
-              </div>
-              {/* <div className="bg-gray-700/50 rounded-lg p-4">
-                <p className="text-sm text-gray-400 mb-1">Fișier</p>
-                <p className="text-sm font-medium text-white truncate">
-                  {patient.filename || 'N/A'}
-                </p>
-                {patient.file_size && (
-                  <p className="text-xs text-gray-400 mt-1">
-                    Size: {(patient.file_size / (1024 * 1024)).toFixed(2)} MB
-                  </p>
-                )}
-              </div> */}
-            </div>
-
-            {/* Download Buttons */}
-            {patient.status === 'completed' && (
-              <div className="space-y-3">
-                <h4 className="text-sm font-semibold text-gray-400 mb-3">Descarcă Rezultate:</h4>
-
-                <button
-                  onClick={handleDownloadScan}
-                  disabled={downloading}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white rounded-lg transition font-medium"
-                >
-                  <Download className="w-5 h-5" />
-                  {downloading ? 'Se descarcă...' : 'Descarcă CT Scan (.nii.gz)'}
-                </button>
-
-                <button
-                  onClick={handleDownloadMask}
-                  disabled={downloading}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white rounded-lg transition font-medium"
-                >
-                  <Download className="w-5 h-5" />
-                  {downloading ? 'Se descarcă...' : 'Descarcă Segmentare (.nii.gz)'}
-                </button>
-
-                <button
-                  onClick={handleDownloadBoth}
-                  disabled={downloading}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-black rounded-lg transition font-medium"
-                >
-                  <Download className="w-5 h-5" />
-                  {downloading ? 'Se descarcă...' : 'Descarcă Ambele (ZIP)'}
-                </button>
-              </div>
-            )}
-          </div>
+            </section>
+          )}
         </div>
       </div>
     </div>

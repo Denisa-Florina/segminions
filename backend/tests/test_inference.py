@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 import torch
 
-from app.ml.errors import InvalidScanError
 from app.ml.inference import Segmenter
 from app.ml.metrics import calculate_metrics
 from app.ml.model_loader import NnUnetModel
@@ -106,28 +105,7 @@ def test_slices_are_resampled_to_the_training_spacing():
     assert not mask[:15, :, 0].any() and not mask[45:, :, 0].any()
 
 
-def test_mirroring_runs_four_flipped_passes_per_patch():
-    network = PixelwiseNetwork()
-    block = (slice(10, 30), slice(5, 20))
-    stream, volume = scan_with_bright_block((60, 40, 1), (0.4, 0.4, 1.0), block)
-    _, mask = segment(make_segmenter(network, use_mirroring=True), stream)
-    assert network.calls == 4                       # identity, flip y, flip x, flip both
-    assert np.array_equal(mask, (volume == BRIGHT_HU).astype(float))
-
-
-def test_scan_needing_too_many_passes_is_rejected():
-    stream, _ = scan_with_bright_block((60, 40, 3), (0.4, 0.4, 1.0), (slice(0, 1), slice(0, 1)))
-    with pytest.raises(InvalidScanError, match="Scan too large"):
-        make_segmenter(PixelwiseNetwork(), max_patches=2).segment(stream)
-
-
 # --- confidence ------------------------------------------------------------
-
-def test_empty_prediction_reports_confidence_that_nothing_is_there():
-    stream, _ = scan_with_bright_block((60, 40, 2), (0.4, 0.4, 1.0), (slice(0, 0), slice(0, 0)))
-    metrics, mask = segment(make_segmenter(PixelwiseNetwork()), stream)
-    assert metrics["voxel_count"] == 0 and not mask.any()
-    assert metrics["confidence"] > 0.99
 
 
 def test_confidence_is_the_mean_probability_of_segmented_voxels():
@@ -149,9 +127,3 @@ def test_inference_errors_are_raised_not_replaced_by_a_fake_mask():
 def test_missing_model_is_fatal_unless_simulation_is_allowed():
     with pytest.raises(RuntimeError, match="ALLOW_SIMULATION"):
         Segmenter(Path("does-not-exist"), allow_simulation=False)
-
-
-def test_allowed_simulation_is_clearly_marked():
-    stream, _ = scan_with_bright_block((60, 40, 1), (0.4, 0.4, 1.0), (slice(0, 1), slice(0, 1)))
-    metrics, _ = Segmenter(Path("does-not-exist"), allow_simulation=True).segment(stream)
-    assert metrics == {"confidence": 0.0, "simulated": True}

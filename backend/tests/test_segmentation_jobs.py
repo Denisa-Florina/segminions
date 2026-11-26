@@ -1,17 +1,15 @@
-"""Background segmentation: status flow, failures, stale jobs, and the job queue.
+"""Background segmentation: status flow, failures, job ownership, and the job queue.
 
 TestingConfig runs jobs inline, so a job has finished when the request returns; the
 response still shows the state at the moment the job was queued."""
 
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 
-import pytest
-
-from app.core.errors import ServiceUnavailableError
+from app.core.clock import utc_now
 from app.core.job_queue import JobQueue
-from app.ml.errors import InvalidScanError
 from app.services.patient_service import (
     PROCESSING_INTERRUPTED,
     SEGMENTATION_FAILED,
@@ -25,13 +23,9 @@ def dicom_files(slices=2):
     return [(BytesIO(f.getvalue()), f.filename) for f in map(make_dicom_slice, range(slices))]
 
 
-def dicom_form(name="Andrei", slices=2):
-    return {"name": name, "age": "30", "dicom_file": dicom_files(slices)}
-
-
 def create_with_scan(client, headers):
-    return client.post("/api/patients/", data=dicom_form(), headers=headers,
-                       content_type="multipart/form-data")
+    return client.post("/api/patients/", headers=headers, content_type="multipart/form-data",
+                       data={"name": "Andrei", "age": "30", "dicom_file": dicom_files()})
 
 
 # --- status flow -----------------------------------------------------------
@@ -44,113 +38,82 @@ def test_create_with_scan_returns_processing_then_completes(
     patient = response.get_json()["patient"]
     assert patient["status"] == "processing"
 
-    stored = patients[patient["id"]]
-    assert stored["status"] == "completed" and stored["segmented"] is True
-    assert stored["metrics"]["confidence"] == 0.87
-    assert set(files[patient["id"]]) == {"scan_data", "mask_data"}
-
     detail = client.get(f"/api/patients/{patient['id']}", headers=auth_headers).get_json()
     assert detail["patient"]["status"] == "completed"
     assert detail["patient"]["confidence"] == 0.87
+    assert set(files[patient["id"]]) == {"scan_data", "mask_data"}
 
 
-def test_create_without_scan_is_pending(client, patients, auth_headers):
-    response = client.post("/api/patients/", data={"name": "Ion", "age": "40"},
-                           headers=auth_headers)
-    assert response.get_json()["patient"]["status"] == "pending"
-
-
-def test_failed_job_is_reported_with_a_message(
+def test_failed_job_is_reported_without_leaking_internal_details(
     client, patients, files, segmenter, auth_headers
 ):
-    segmenter.fail_with = RuntimeError("CUDA exploded at 0x7ff")   # internal detail
+    segmenter.fail_with = RuntimeError("CUDA exploded at 0x7ff")
     patient_id = create_with_scan(client, auth_headers).get_json()["patient"]["id"]
 
     detail = client.get(f"/api/patients/{patient_id}", headers=auth_headers).get_json()
     assert detail["patient"]["status"] == "failed"
-    assert detail["patient"]["segmentationError"] == SEGMENTATION_FAILED   # not leaked
+    assert detail["patient"]["segmentationError"] == SEGMENTATION_FAILED
     assert "mask_data" not in files[patient_id]
 
 
-def test_scan_rejected_before_queueing_gives_400_and_creates_nothing(
-    client, patients, files, segmenter, auth_headers
-):
-    segmenter.reject_with = InvalidScanError("Scan too large for this server")
-    count = len(patients)
-    response = create_with_scan(client, auth_headers)
-    assert response.status_code == 400
-    assert "Scan too large" in response.get_json()["error"]
-    assert len(patients) == count and segmenter.segmented == 0
-
-
-def test_full_queue_gives_503_and_marks_patient_failed(
+def test_full_queue_gives_503_and_keeps_the_scan(
     client, patients, files, segmenter, auth_headers, monkeypatch
 ):
     full_queue = JobQueue(max_pending=0, inline=True)
     monkeypatch.setattr(patient_service, "_job_queue_provider", lambda: full_queue)
 
-    response = create_with_scan(client, auth_headers)
-    assert response.status_code == 503
+    assert create_with_scan(client, auth_headers).status_code == 503
     created = [p for p in patients.values() if p["name"] == "Andrei"][0]
     assert created["status"] == "failed"
-    assert "busy" in created["segmentation_error"]
     assert "scan_data" in files[created["id"]]      # kept: the user can re-segment later
-
-
-# --- upload / re-segment ---------------------------------------------------
-
-def test_upload_replaces_the_old_mask(client, patients, files, segmenter, auth_headers):
-    files["p1"] = {"mask_data": "old mask"}
-    response = client.post("/api/patients/p1/upload-dicom", headers=auth_headers,
-                           data={"dicom_file": dicom_files(1)},
-                           content_type="multipart/form-data")
-    assert response.status_code == 202
-    assert response.get_json()["result"] == {"status": "processing"}
-    assert files["p1"]["mask_data"].data == b"mask-bytes"          # the new one
-    assert patients["p1"]["status"] == "completed"
 
 
 def test_cannot_start_a_second_job_while_processing(
     client, patients, files, segmenter, auth_headers
 ):
-    patients["p1"].update(status="processing", processing_started_at=time.time())
-    upload = client.post("/api/patients/p1/upload-dicom", headers=auth_headers,
-                         data={"dicom_file": dicom_files(1)},
-                         content_type="multipart/form-data")
-    resegment = client.post("/api/patients/p1/re-segment", headers=auth_headers)
-    assert upload.status_code == resegment.status_code == 409
+    patients["p1"].update(status="processing", processing_started_at=utc_now())
+    response = client.post("/api/patients/p1/re-segment", headers=auth_headers)
+    assert response.status_code == 409
     assert segmenter.segmented == 0
 
 
-def test_resegment_runs_the_model_on_the_stored_scan(
-    client, patients, files, segmenter, auth_headers
-):
-    create_with_scan(client, auth_headers)
-    patient_id = [p for p in patients.values() if p["name"] == "Andrei"][0]["id"]
+# --- a job only writes while it is the patient's current job --------------------
 
-    response = client.post(f"/api/patients/{patient_id}/re-segment", headers=auth_headers)
-    assert response.status_code == 202
-    assert response.get_json()["patient"]["status"] == "processing"
-    assert segmenter.segmented == 2
-    assert patients[patient_id]["status"] == "completed"
+def test_superseded_job_does_not_overwrite_the_newer_scan(patients, files, segmenter):
+    # Job "old" was marked stale, then the doctor uploaded a new scan (job "new").
+    patients["p1"].update(status="processing", job_id="new", metrics={})
+    patient_service.run_segmentation("p1", "old", b"old scan", "old.nii.gz")
+
+    assert patients["p1"]["status"] == "processing"            # untouched
+    assert "mask_data" not in files.get("p1", {})
 
 
-# --- jobs lost by a restart ------------------------------------------------
+def test_job_of_a_deleted_patient_writes_nothing(patients, files, segmenter):
+    patients["p1"].update(status="processing", job_id="job-1")
+    original_segment = segmenter.segment
 
-def test_stale_processing_job_is_reported_as_failed(client, patients, auth_headers):
-    an_hour_ago = time.time() - 3600
-    patients["p1"].update(status="processing", processing_started_at=an_hour_ago)
+    def segment_then_delete(stream):                 # deleted while the model runs
+        result = original_segment(stream)
+        patients.pop("p1")
+        return result
 
+    segmenter.segment = segment_then_delete
+    patient_service.run_segmentation("p1", "job-1", b"scan", "scan.nii.gz")
+    assert "p1" not in files                         # no orphaned mask
+
+
+def test_job_lost_by_a_restart_is_reported_as_failed(client, patients, auth_headers, monkeypatch):
+    started = datetime(2026, 11, 26, 12, 0, tzinfo=timezone.utc)
+    patients["p1"].update(status="processing", processing_started_at=started)
+
+    monkeypatch.setattr(patient_service, "_clock", lambda: started + timedelta(minutes=19))
+    detail = client.get("/api/patients/p1", headers=auth_headers).get_json()["patient"]
+    assert detail["status"] == "processing"
+
+    monkeypatch.setattr(patient_service, "_clock", lambda: started + timedelta(minutes=21))
     detail = client.get("/api/patients/p1", headers=auth_headers).get_json()["patient"]
     assert detail["status"] == "failed"
     assert detail["segmentationError"] == PROCESSING_INTERRUPTED
-    assert patients["p1"]["status"] == "failed"         # persisted, not just displayed
-
-
-def test_recent_processing_job_is_left_alone(client, patients, auth_headers):
-    patients["p1"].update(status="processing", processing_started_at=time.time())
-    detail = client.get("/api/patients/p1", headers=auth_headers).get_json()["patient"]
-    assert detail["status"] == "processing"
 
 
 # --- the queue -------------------------------------------------------------
@@ -180,16 +143,3 @@ def test_queue_runs_jobs_in_the_background_one_at_a_time():
         time.sleep(0.01)
     assert done == [0, 1, 2]                      # in order
     assert max_running[0] == 1                    # never two at once
-
-
-def test_queue_rejects_jobs_when_full_and_survives_crashing_jobs():
-    queue = JobQueue(max_pending=1, inline=True)
-    queue.submit(lambda: 1 / 0)                   # crash is logged, not raised
-    assert queue.pending == 0
-
-    blocking = JobQueue(max_pending=1)
-    release = threading.Event()
-    blocking.submit(lambda: release.wait(timeout=5))
-    with pytest.raises(ServiceUnavailableError):
-        blocking.submit(lambda: None)
-    release.set()

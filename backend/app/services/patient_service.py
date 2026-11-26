@@ -19,10 +19,11 @@ import logging
 import time
 import uuid
 import zipfile
-from datetime import datetime
+from datetime import timedelta
 
 from flask import current_app
 
+from app.core.clock import Clock, as_utc, utc_now
 from app.core.errors import AppError, ConflictError, NotFoundError, ValidationError
 from app.extensions import get_job_queue, get_segmenter
 from app.ml.dicom_converter import DicomConversionError, NiftiScan, convert_dicom_series
@@ -42,21 +43,12 @@ RESULT_NOT_SAVED = "The segmentation result could not be saved. Please re-segmen
 PROCESSING_INTERRUPTED = "Processing was interrupted (server restart). Please re-segment."
 
 
-def _today() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
-
-
 def _mask_filename(scan_filename: str) -> str:
     return scan_filename.replace(".nii.gz", "_mask.nii.gz")
 
 
 def _new_job_id() -> str:
     return uuid.uuid4().hex
-
-
-def _processing_fields(job_id: str) -> dict:
-    return {"status": PROCESSING, "job_id": job_id, "processing_started_at": time.time(),
-            "segmentation_error": None}
 
 
 class PatientService:
@@ -66,11 +58,13 @@ class PatientService:
         files: FirestoreFileStorage,
         segmenter_provider,
         job_queue_provider,
+        clock: Clock = utc_now,
     ):
         self.patients = patients
         self.files = files
         self._segmenter_provider = segmenter_provider
         self._job_queue_provider = job_queue_provider
+        self._clock = clock
 
     # --- queries -----------------------------------------------------------
 
@@ -109,14 +103,14 @@ class PatientService:
     # --- commands ----------------------------------------------------------
 
     def create(self, data: PatientCreate, dicom_files) -> dict:
-        base = {**data.model_dump(), "date": _today(), "segmented": False, "metrics": {}}
+        base = {**data.model_dump(), "date": self._today(), "segmented": False, "metrics": {}}
         if not dicom_files:
             return self.patients.create({**base, "status": PENDING})
 
         scan = self._prepare_scan(dicom_files)
         job_id = _new_job_id()
         patient = self.patients.create({
-            **base, **_processing_fields(job_id),
+            **base, **self._processing_fields(job_id),
             "filename": scan.filename, "file_size": scan.size,
         })
         self._store_scan_and_enqueue(patient["id"], job_id, scan)
@@ -132,7 +126,7 @@ class PatientService:
         # The previous mask belongs to the previous scan: never serve it for the new one.
         self.files.delete(patient_id, MASK)
         self.patients.update(patient_id, {
-            **_processing_fields(job_id), "segmented": False, "metrics": {},
+            **self._processing_fields(job_id), "segmented": False, "metrics": {},
             "filename": scan.filename, "file_size": scan.size,
         })
         self._store_scan_and_enqueue(patient_id, job_id, scan)
@@ -145,7 +139,7 @@ class PatientService:
         self._check_scan(io.BytesIO(scan.data))
 
         job_id = _new_job_id()
-        updated = self.patients.update(patient_id, _processing_fields(job_id))
+        updated = self.patients.update(patient_id, self._processing_fields(job_id))
         self._enqueue(patient_id, job_id, scan.data, patient.get("filename") or "scan.nii.gz")
         return updated
 
@@ -196,7 +190,7 @@ class PatientService:
 
         self._finish_job(patient_id, job_id, {
             "status": COMPLETED, "segmented": True, "metrics": metrics,
-            "segmentation_error": None, "date": _today(),
+            "segmentation_error": None, "date": self._today(),
         })
         logger.info("Patient %s segmented in %.1fs", patient_id, time.perf_counter() - started)
 
@@ -256,6 +250,13 @@ class PatientService:
             self._mark_failed(patient_id, message)
             raise
 
+    def _today(self) -> str:
+        return self._clock().strftime("%Y-%m-%d")
+
+    def _processing_fields(self, job_id: str) -> dict:
+        return {"status": PROCESSING, "job_id": job_id,
+                "processing_started_at": self._clock(), "segmentation_error": None}
+
     def _mark_failed(self, patient_id: str, message: str) -> None:
         self.patients.update(patient_id, {"status": FAILED, "segmentation_error": message})
 
@@ -267,11 +268,11 @@ class PatientService:
     def _expire_if_stale(self, patient: dict) -> dict:
         """A job still `processing` long after it started was lost (e.g. the server
         restarted): report it as failed instead of leaving it spinning forever."""
-        started = patient.get("processing_started_at")
+        started = as_utc(patient.get("processing_started_at"))
         if patient.get("status") != PROCESSING or not started:
             return patient
-        stale_after = current_app.config["JOB_STALE_AFTER_MINUTES"] * 60
-        if time.time() - float(started) < stale_after:
+        stale_after = timedelta(minutes=current_app.config["JOB_STALE_AFTER_MINUTES"])
+        if self._clock() - started < stale_after:
             return patient
         logger.warning("Marking stale segmentation job of patient %s as failed", patient["id"])
         self._mark_failed(patient["id"], PROCESSING_INTERRUPTED)

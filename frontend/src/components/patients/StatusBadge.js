@@ -1,10 +1,10 @@
 import React from 'react';
 
 const STATUSES = {
-  pending: { label: 'Fără scanare', className: 'bg-gray-600/20 text-gray-300' },
-  processing: { label: 'În procesare', className: 'bg-yellow-600/20 text-yellow-400' },
-  completed: { label: 'Completat', className: 'bg-green-600/20 text-green-400' },
-  failed: { label: 'Eșuat', className: 'bg-red-600/20 text-red-400' },
+  pending: { label: 'No scan', className: 'bg-gray-600/20 text-gray-300' },
+  processing: { label: 'Processing', className: 'bg-yellow-600/20 text-yellow-400' },
+  completed: { label: 'Completed', className: 'bg-green-600/20 text-green-400' },
+  failed: { label: 'Failed', className: 'bg-red-600/20 text-red-400' },
 };
 
 function StatusBadge({ status, className = '' }) {

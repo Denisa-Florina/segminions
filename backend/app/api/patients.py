@@ -63,7 +63,10 @@ def update_patient(patient_id):
 
     changes = updates.model_dump(exclude_unset=True, exclude_none=True)
     patient = patient_service.update(patient_id, current_doctor_id(), changes)
-    return jsonify({"message": "Patient updated successfully", "patient": patient}), 200
+    return jsonify({
+        "message": "Patient updated successfully",
+        "patient": PatientDetail.from_db(patient).to_json(),
+    }), 200
 
 
 @patients_bp.delete("/<patient_id>")

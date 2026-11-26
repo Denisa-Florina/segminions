@@ -26,12 +26,26 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+// Binary requests (downloads, the viewer) receive their JSON error body as raw bytes.
+async function errorMessage(data) {
+  try {
+    if (data instanceof Blob) data = JSON.parse(await data.text());
+    else if (data instanceof ArrayBuffer) data = JSON.parse(new TextDecoder().decode(data));
+  } catch {
+    return null;
+  }
+  return data?.error || null;
+}
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    // A request cancelled on purpose (e.g. the page was left) is not a server problem.
+    if (axios.isCancel(error)) return Promise.reject(error);
+
     if (error.response) {
       const { status, data } = error.response;
-      
+
       console.error('API Error:', {
         status,
         data,
@@ -45,7 +59,9 @@ api.interceptors.response.use(
         window.location.href = '/login';
       }
       
-      return Promise.reject(new Error(data.error || 'An error occurred'));
+      const apiError = new Error((await errorMessage(data)) || 'An error occurred');
+      apiError.status = status;
+      return Promise.reject(apiError);
     }
     return Promise.reject(new Error('No response from server'));
   }

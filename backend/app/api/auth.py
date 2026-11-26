@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 
 from app.core.errors import ValidationError
 from app.core.security import create_access_token, current_doctor_id, require_authentication
+from app.schemas.doctor import DoctorOut
 from app.services.auth_service import auth_service
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
@@ -17,7 +18,7 @@ def login():
     doctor = auth_service.authenticate(email, password)
     return jsonify({
         "message": "Login successful",
-        "doctor": doctor,
+        "doctor": DoctorOut.from_db(doctor).to_json(),
         "token": create_access_token(doctor["id"]),
     }), 200
 
@@ -31,4 +32,5 @@ def logout():
 @auth_bp.get("/me")
 def get_current_doctor():
     require_authentication()
-    return jsonify({"doctor": auth_service.get_doctor(current_doctor_id())}), 200
+    doctor = auth_service.get_doctor(current_doctor_id())
+    return jsonify({"doctor": DoctorOut.from_db(doctor).to_json()}), 200

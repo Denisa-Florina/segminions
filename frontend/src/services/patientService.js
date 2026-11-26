@@ -1,8 +1,33 @@
 import api from './api';
 
-// Segmentation runs in the background, so requests return quickly; only uploading
-// large DICOM series needs more than the default timeout.
-const UPLOAD_TIMEOUT_MS = 2 * 60 * 1000;
+// Segmentation runs in the background, so requests return quickly; only moving whole
+// scans (uploading a DICOM series, loading a volume into the viewer) takes longer.
+const LARGE_TRANSFER_TIMEOUT_MS = 2 * 60 * 1000;
+
+function dicomFormData(dicomFiles, fields = {}) {
+  const formData = new FormData();
+  Object.entries(fields).forEach(([key, value]) => formData.append(key, value));
+  (dicomFiles || []).forEach(file => formData.append('dicom_file', file));
+  return formData;
+}
+
+function filenameFromHeaders(headers, fallback) {
+  const match = headers['content-disposition']?.match(/filename="?([^";]+)"?/);
+  return match ? match[1] : fallback;
+}
+
+/** Downloads `path` and hands it to the browser as a file to save. */
+async function saveFile(path, fallbackName) {
+  const response = await api.get(path, { responseType: 'blob' });
+  const url = window.URL.createObjectURL(response.data);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filenameFromHeaders(response.headers, fallbackName);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
 
 export const patientService = {
   async getPatients() {
@@ -16,21 +41,8 @@ export const patientService = {
   },
 
   async createPatient(patientData, dicomFiles) {
-    const formData = new FormData();
-    formData.append('name', patientData.name);
-    formData.append('age', patientData.age);
-    if (dicomFiles && dicomFiles.length > 0) {
-      dicomFiles.forEach(file => {
-        formData.append('dicom_file', file);
-      });
-    }
-
-    const response = await api.post('/patients/', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
-      timeout: UPLOAD_TIMEOUT_MS
-    });
+    const formData = dicomFormData(dicomFiles, { name: patientData.name, age: patientData.age });
+    const response = await api.post('/patients/', formData, { timeout: LARGE_TRANSFER_TIMEOUT_MS });
     return response.data.patient;
   },
 
@@ -44,21 +56,11 @@ export const patientService = {
   },
 
   async uploadDicom(patientId, dicomFiles) {
-    const formData = new FormData();
-    
-    if (dicomFiles && dicomFiles.length > 0) {
-      dicomFiles.forEach(file => {
-        formData.append('dicom_file', file);
-      });
-    }
-
-    const response = await api.post(`/patients/${patientId}/upload-dicom`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
-      timeout: UPLOAD_TIMEOUT_MS
-    });
-    
+    const response = await api.post(
+      `/patients/${patientId}/upload-dicom`,
+      dicomFormData(dicomFiles),
+      { timeout: LARGE_TRANSFER_TIMEOUT_MS }
+    );
     return response.data.result;
   },
 
@@ -67,105 +69,31 @@ export const patientService = {
     return response.data.patient;
   },
 
-  // ===== DOWNLOAD FUNCTIONS =====
-  
-  async downloadScan(patientId) {
-    try {
-      const response = await api.get(`/patients/${patientId}/download/scan`, {
-        responseType: 'blob'
-      });
-      
-      // Create download link
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      
-      // Extract filename from headers if available
-      const contentDisposition = response.headers['content-disposition'];
-      let filename = `scan_${patientId}.nii.gz`;
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      }
-      
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-      
-      return { success: true };
-    } catch (error) {
-      console.error('Error downloading scan:', error);
-      throw error;
-    }
+  // ===== Downloads =====
+
+  downloadScan(patientId) {
+    return saveFile(`/patients/${patientId}/download/scan`, `scan_${patientId}.nii.gz`);
   },
 
-  async downloadMask(patientId) {
-    try {
-      const response = await api.get(`/patients/${patientId}/download/mask`, {
-        responseType: 'blob'
-      });
-      
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      
-      const contentDisposition = response.headers['content-disposition'];
-      let filename = `segmentation_${patientId}.nii.gz`;
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      }
-      
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-      
-      return { success: true };
-    } catch (error) {
-      console.error('Error downloading mask:', error);
-      throw error;
-    }
+  downloadMask(patientId) {
+    return saveFile(`/patients/${patientId}/download/mask`, `segmentation_${patientId}.nii.gz`);
   },
 
-  async downloadBoth(patientId) {
-    try {
-      const response = await api.get(`/patients/${patientId}/download/both`, {
-        responseType: 'blob'
-      });
-      
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      
-      const contentDisposition = response.headers['content-disposition'];
-      let filename = `results_${patientId}.zip`;
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      }
-      
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-      
-      return { success: true };
-    } catch (error) {
-      console.error('Error downloading files:', error);
-      throw error;
-    }
-  }
+  downloadBoth(patientId) {
+    return saveFile(`/patients/${patientId}/download/both`, `results_${patientId}.zip`);
+  },
+
+  // ===== Viewer =====
+
+  /** Raw `.nii.gz` bytes of the scan or the mask (`kind` is "scan" or "mask"). */
+  async getVolume(patientId, kind, signal) {
+    const response = await api.get(`/patients/${patientId}/download/${kind}`, {
+      responseType: 'arraybuffer',
+      timeout: LARGE_TRANSFER_TIMEOUT_MS,
+      signal,
+    });
+    return response.data;
+  },
 };
 
 export default patientService;

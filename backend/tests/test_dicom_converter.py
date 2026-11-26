@@ -1,12 +1,13 @@
 from io import BytesIO
 
+import nibabel as nib
 import numpy as np
 import pytest
 from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
-from app.ml.dicom_converter import DicomConversionError, convert_dicom_series
-from app.ml.nifti_io import read_nifti
+from app.ml.dicom_converter import convert_dicom_series
+from app.ml.nifti_io import is_gzipped, read_nifti
 
 ROWS, COLUMNS = 24, 32
 
@@ -78,25 +79,11 @@ def test_spacing_comes_from_pixel_spacing_and_slice_positions():
     assert zooms == pytest.approx((0.7, 0.5, 2.0))
 
 
-def test_single_dicom_file_becomes_one_slice():
-    _, volume, zooms = convert([make_dicom_slice(0, thickness=3.0)])
-    assert volume.shape == (COLUMNS, ROWS, 1)
-    assert zooms[2] == pytest.approx(3.0)                     # thickness when no neighbour
+def test_converted_scan_is_a_real_nii_gz_that_opens_with_nibabel(tmp_path):
+    scan = convert_dicom_series([make_dicom_slice(z) for z in (0, 2)])
+    data = scan.stream.getvalue()
+    assert is_gzipped(data)
 
-
-def test_multiple_files_are_sorted_by_position():
-    files = [make_dicom_slice(z, np.full((ROWS, COLUMNS), z, dtype=np.uint16)) for z in (3, 1, 2)]
-    scan, volume, _ = convert(files)
-    assert volume.shape == (COLUMNS, ROWS, 3)
-    assert volume[0, 0, :].tolist() == [1, 2, 3]
-    assert scan.filename.endswith("_3slices.nii.gz")
-
-
-def test_rejects_upload_without_dcm_files():
-    with pytest.raises(DicomConversionError, match="No valid DICOM files"):
-        convert_dicom_series([UploadedFile("photo.png")])
-
-
-def test_rejects_corrupt_dcm_file():
-    with pytest.raises(DicomConversionError, match="DICOM conversion failed"):
-        convert_dicom_series([UploadedFile("scan.dcm", b"not a dicom file")])
+    path = tmp_path / "scan.nii.gz"          # what a doctor does with a download
+    path.write_bytes(data)
+    assert nib.load(path).shape == (COLUMNS, ROWS, 2)

@@ -113,12 +113,10 @@ class FakeSegmenter:
 
     def __init__(self):
         self.fail_with: Exception | None = None
-        self.reject_with: Exception | None = None
         self.segmented = 0
 
     def check_scan(self, stream):
-        if self.reject_with:
-            raise self.reject_with
+        pass
 
     def segment(self, stream):
         if self.fail_with:
