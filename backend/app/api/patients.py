@@ -41,7 +41,7 @@ def create_patient():
     patient = patient_service.create(data, request.files.getlist("dicom_file"))
     return jsonify({
         "message": "Patient created successfully",
-        "patient": PatientSummary.from_db(patient, unsegmented_status="pending").to_json(),
+        "patient": PatientSummary.from_db(patient).to_json(),
     }), 201
 
 
@@ -50,7 +50,7 @@ def upload_dicom(patient_id):
     result = patient_service.upload_scan(
         patient_id, current_doctor_id(), request.files.getlist("dicom_file")
     )
-    return jsonify({"message": "DICOM uploaded and processed successfully", "result": result}), 200
+    return jsonify({"message": "Scan uploaded, segmentation started", "result": result}), 202
 
 
 @patients_bp.put("/<patient_id>")
@@ -74,7 +74,10 @@ def delete_patient(patient_id):
 @patients_bp.post("/<patient_id>/re-segment")
 def resegment_patient(patient_id):
     patient = patient_service.resegment(patient_id, current_doctor_id())
-    return jsonify({"message": "Re-segmentation completed", "patient": patient}), 200
+    return jsonify({
+        "message": "Re-segmentation started",
+        "patient": PatientDetail.from_db(patient).to_json(),
+    }), 202
 
 
 @patients_bp.get("/<patient_id>/download/scan")

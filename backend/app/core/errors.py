@@ -28,6 +28,14 @@ class NotFoundError(AppError):
     status_code = 404
 
 
+class ConflictError(AppError):
+    status_code = 409
+
+
+class ServiceUnavailableError(AppError):
+    status_code = 503
+
+
 def register_error_handlers(app) -> None:
     @app.errorhandler(AppError)
     def handle_app_error(error: AppError):

@@ -14,6 +14,7 @@ Mirrors nnU-Net's 2D inference:
 import itertools
 import logging
 import time
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
@@ -29,6 +30,15 @@ from app.ml.simulation import simulate_segmentation
 from app.ml.sliding_window import count_patches, predict_sliding_window
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _ScanPlan:
+    image: object               # nibabel image
+    volume: np.ndarray          # (x, y, z)
+    zooms: tuple[float, float, float]
+    slice_shape: tuple[int, int]   # one slice in nnU-Net order (y, x)
+    work_shape: tuple[int, int]    # the same slice at the training spacing
 
 
 class Segmenter:
@@ -59,6 +69,12 @@ class Segmenter:
     def is_model_loaded(self) -> bool:
         return self._model is not None
 
+    def check_scan(self, nifti_stream: BytesIO) -> None:
+        """Raise InvalidScanError if the scan cannot be segmented (checked up front, so
+        the user gets the error immediately instead of after queueing)."""
+        if self._model is not None:
+            self._plan(nifti_stream)
+
     def segment(self, nifti_stream: BytesIO) -> tuple[dict, BytesIO]:
         """Return (metrics, mask as NIfTI stream). Inference errors are raised, never
         replaced by a placeholder mask."""
@@ -68,9 +84,7 @@ class Segmenter:
 
     # --- pipeline ----------------------------------------------------------
 
-    def _run_model(self, nifti_stream: BytesIO) -> tuple[dict, BytesIO]:
-        started = time.perf_counter()
-        model = self._model
+    def _plan(self, nifti_stream: BytesIO) -> _ScanPlan:
         image = read_nifti(nifti_stream)
         volume = self._as_3d(image.get_fdata(dtype=np.float32))
         zooms = tuple(float(z) for z in image.header.get_zooms()[:3])
@@ -79,15 +93,22 @@ class Segmenter:
         # One 2D slice in nnU-Net order: (rows = y, columns = x).
         slice_shape = (volume.shape[1], volume.shape[0])
         slice_spacing = (zooms[1], zooms[0])
-        work_shape = resampled_shape(slice_shape, slice_spacing, model.target_spacing)
-        num_slices = volume.shape[2]
-        self._check_size(work_shape, num_slices)
+        work_shape = resampled_shape(slice_shape, slice_spacing, self._model.target_spacing)
+        self._check_size(work_shape, volume.shape[2])
+        return _ScanPlan(image, volume, zooms, slice_shape, work_shape)
+
+    def _run_model(self, nifti_stream: BytesIO) -> tuple[dict, BytesIO]:
+        started = time.perf_counter()
+        model = self._model
+        plan = self._plan(nifti_stream)
+        image, volume, zooms = plan.image, plan.volume, plan.zooms
+        slice_shape, work_shape = plan.slice_shape, plan.work_shape
 
         logger.info("Running nnU-Net on volume %s, spacing %s mm -> slices resampled to %s",
                     volume.shape, zooms, work_shape)
         normalized = normalize_ct(volume, model.intensity_properties)
         probability = np.empty(volume.shape, dtype=np.float32)
-        for k in range(num_slices):
+        for k in range(volume.shape[2]):
             slice_yx = resize_2d(normalized[:, :, k].T, work_shape, order=3)
             logits = predict_sliding_window(
                 slice_yx, model.patch_size, self._predict_patches, self._batch_size

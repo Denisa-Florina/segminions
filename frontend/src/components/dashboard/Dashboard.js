@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import patientService from '../../services/patientService';
 import Sidebar from './Sidebar';
@@ -7,6 +7,8 @@ import PatientsView from '../patients/PatientsView';
 import PatientProfile from '../patients/PatientProfile';
 import SettingsView from '../settings/SettingsView';
 import AddPatientModal from '../patients/AddPatientModal';
+
+const LIST_POLL_INTERVAL_MS = 5000;
 
 function Dashboard() {
   const { doctor } = useAuth();
@@ -18,23 +20,33 @@ function Dashboard() {
   const [showAddPatient, setShowAddPatient] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
-  useEffect(() => {
-    if (doctor?.id) {
-      loadPatients();
-    }
-  }, [doctor]);
-
-  const loadPatients = async () => {
-    setLoading(true);
+  // `silent` refreshes the list without the loading spinner (used while polling).
+  const loadPatients = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const data = await patientService.getPatients();
       setPatients(data);
     } catch (err) {
       console.error('Error loading patients:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (doctor?.id) {
+      loadPatients();
+    }
+  }, [doctor, loadPatients]);
+
+  // Segmentation runs in the background: refresh the list until no scan is processing.
+  // (The patient profile polls its own patient.)
+  const anyProcessing = patients.some(p => p.status === 'processing');
+  useEffect(() => {
+    if (!anyProcessing || activeView === 'patient') return undefined;
+    const timer = setInterval(() => loadPatients({ silent: true }), LIST_POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [anyProcessing, activeView, loadPatients]);
   // Average only over real AI results: unsegmented and simulated patients have no
   // meaningful confidence.
   const scored = patients.filter(p => p.status === 'completed' && !p.simulated);
@@ -93,7 +105,7 @@ function Dashboard() {
           <PatientProfile
             patient={selectedPatient}
             onBack={() => setActiveView('patients')}
-            onUpdate={loadPatients}
+            onUpdate={() => loadPatients({ silent: true })}
           />
         )}
 

@@ -88,6 +88,21 @@ If the model cannot be loaded the app refuses to start, unless `ALLOW_SIMULATION
 (default in development), in which case results are explicitly marked `simulated`.
 Inference errors are returned as errors, never replaced by a placeholder mask.
 
+## Background segmentation
+
+Segmentation can take minutes on a small CPU, so it does not run inside the request:
+
+1. The request converts and validates the scan (bad files and scans that are too large
+   are rejected immediately with `400`), stores it, sets the patient to `processing`
+   and returns.
+2. A background queue (`app/core/job_queue.py`) runs one segmentation at a time, to keep
+   memory bounded; at most `MAX_PENDING_JOBS` scans wait (`503` beyond that).
+3. The job sets `completed` (metrics + mask) or `failed` (with a message that never
+   exposes internal errors). The frontend polls the patient until the status changes.
+
+Status flow: `pending` (no scan) → `processing` → `completed` | `failed`.
+A new upload or re-segment is refused with `409` while one is processing.
+
 ## API
 
 | Method | Endpoint | Description |
@@ -97,12 +112,12 @@ Inference errors are returned as errors, never replaced by a placeholder mask.
 | POST | `/api/auth/logout` | Log out (the client discards its token) |
 | GET | `/api/auth/me` | Current doctor |
 | GET | `/api/patients` | List the authenticated doctor's patients |
-| POST | `/api/patients/` | Create a patient (multipart, optional `dicom_file`s) |
+| POST | `/api/patients/` | Create a patient (multipart, optional `dicom_file`s; segmentation starts in the background) |
 | GET | `/api/patients/<id>` | Patient details and metrics |
 | PUT | `/api/patients/<id>` | Update name / age |
 | DELETE | `/api/patients/<id>` | Delete a patient |
-| POST | `/api/patients/<id>/upload-dicom` | Upload a scan and run segmentation |
-| POST | `/api/patients/<id>/re-segment` | Re-run segmentation on the stored scan |
+| POST | `/api/patients/<id>/upload-dicom` | Upload a scan, start segmentation (`202`) |
+| POST | `/api/patients/<id>/re-segment` | Re-run segmentation on the stored scan (`202`) |
 | GET | `/api/patients/<id>/download/scan` | Download the scan (`.nii.gz`) |
 | GET | `/api/patients/<id>/download/mask` | Download the mask (`.nii.gz`) |
 | GET | `/api/patients/<id>/download/both` | Download both as a ZIP |
@@ -121,9 +136,12 @@ Inference errors are returned as errors, never replaced by a placeholder mask.
   the model never saw; a localisation and cropping step is needed for full scans.
 - **Inference cost:** each scan is limited to `MAX_INFERENCE_PATCHES` model passes
   (default 500, about 4 minutes on a 0.1 CPU instance); larger scans get a 400 error.
-- **File storage:** scans are stored as base64 in Firestore; Cloud Storage is the target.
-- **Synchronous inference:** segmentation runs inside the request; a background job queue
-  is planned for large scans.
+- **File storage:** scans are stored as base64 in Firestore (chunked above 512 KB);
+  Cloud Storage is the target, and only `app/storage/file_storage.py` would change.
+- **In-process job queue:** jobs live in the web process, so a restart loses queued and
+  running jobs. They are detected (`processing` for longer than
+  `JOB_STALE_AFTER_MINUTES`) and reported as failed, and the user can re-segment. A
+  dedicated worker with a persistent queue (Cloud Tasks, RQ/Celery) would remove this.
 - **Orientation:** DICOM direction cosines (`ImageOrientationPatient`) are not applied;
   slices are assumed axial and in the standard row/column order.
 - This is a research prototype, not a validated medical device.

@@ -2,17 +2,24 @@
 
 Every operation is scoped to the authenticated doctor: a patient that belongs to
 another doctor is reported as not found, so its existence is not revealed.
+
+Segmentation runs in the background. A request validates and stores the scan, marks
+the patient `processing` and returns; the job then sets `completed` (with metrics and
+mask) or `failed` (with a message). Status flow:
+
+    pending (no scan) -> processing -> completed | failed -> processing (re-segment) ...
 """
 
 import io
 import logging
+import time
 import zipfile
 from datetime import datetime
 
 from flask import current_app
 
-from app.core.errors import NotFoundError, ValidationError
-from app.extensions import get_segmenter
+from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.extensions import get_job_queue, get_segmenter
 from app.ml.dicom_converter import DicomConversionError, NiftiScan, convert_dicom_series
 from app.ml.errors import InvalidScanError
 from app.repositories.patient_repository import PatientRepository
@@ -20,6 +27,11 @@ from app.schemas.patient import PatientCreate
 from app.storage.file_storage import MASK, SCAN, FirestoreFileStorage, StoredFile
 
 logger = logging.getLogger(__name__)
+
+PENDING, PROCESSING, COMPLETED, FAILED = "pending", "processing", "completed", "failed"
+
+SEGMENTATION_FAILED = "Segmentation failed. Please try again or upload a different scan."
+PROCESSING_INTERRUPTED = "Processing was interrupted (server restart). Please re-segment."
 
 
 def _today() -> str:
@@ -30,24 +42,34 @@ def _mask_filename(scan_filename: str) -> str:
     return scan_filename.replace(".nii.gz", "_mask.nii.gz")
 
 
+def _processing_fields() -> dict:
+    return {"status": PROCESSING, "processing_started_at": time.time(),
+            "segmentation_error": None}
+
+
 class PatientService:
     def __init__(
-        self, patients: PatientRepository, files: FirestoreFileStorage, segmenter_provider
+        self,
+        patients: PatientRepository,
+        files: FirestoreFileStorage,
+        segmenter_provider,
+        job_queue_provider,
     ):
         self.patients = patients
         self.files = files
         self._segmenter_provider = segmenter_provider
+        self._job_queue_provider = job_queue_provider
 
     # --- queries -----------------------------------------------------------
 
     def list_for_doctor(self, doctor_id: str) -> list[dict]:
-        return self.patients.list_by_doctor(doctor_id)
+        return [self._expire_if_stale(p) for p in self.patients.list_by_doctor(doctor_id)]
 
     def get(self, patient_id: str, doctor_id: str) -> dict:
         patient = self.patients.get(patient_id)
         if not patient or patient.get("doctor_id") != str(doctor_id):
             raise NotFoundError("Patient not found")
-        return patient
+        return self._expire_if_stale(patient)
 
     def get_file(
         self, patient_id: str, doctor_id: str, key: str, not_found_message: str
@@ -75,61 +97,41 @@ class PatientService:
     # --- commands ----------------------------------------------------------
 
     def create(self, data: PatientCreate, dicom_files) -> dict:
-        base = {**data.model_dump(), "date": _today()}
-
+        base = {**data.model_dump(), "date": _today(), "segmented": False, "metrics": {}}
         if not dicom_files:
-            return self.patients.create({**base, "segmented": False, "metrics": {"confidence": 0}})
+            return self.patients.create({**base, "status": PENDING})
 
-        scan = self._convert(dicom_files)
-        metrics, mask_stream = self._segment(scan.stream)
-
+        scan = self._prepare_scan(dicom_files)
         patient = self.patients.create({
-            **base,
-            "filename": scan.filename,
-            "file_size": scan.size,
-            "segmented": True,
-            "metrics": metrics,
+            **base, **_processing_fields(), "filename": scan.filename, "file_size": scan.size,
         })
-        try:
-            self._store_results(patient["id"], scan, mask_stream)
-        except Exception:
-            logger.exception("Patient %s created but its files could not be saved", patient["id"])
+        self._store_scan_and_enqueue(patient["id"], scan)
         return patient
 
     def upload_scan(self, patient_id: str, doctor_id: str, dicom_files) -> dict:
         if not dicom_files:
             raise ValidationError("No DICOM file uploaded")
-        self.get(patient_id, doctor_id)
+        self._ensure_not_processing(self.get(patient_id, doctor_id))
 
-        scan = self._convert(dicom_files)
-        metrics, mask_stream = self._segment(scan.stream)
-        self._store_results(patient_id, scan, mask_stream)
-
-        date = _today()
+        scan = self._prepare_scan(dicom_files)
+        # The previous mask belongs to the previous scan: never serve it for the new one.
+        self.files.delete(patient_id, MASK)
         self.patients.update(patient_id, {
-            "filename": scan.filename,
-            "file_size": scan.size,
-            "metrics": metrics,
-            "segmented": True,
-            "date": date,
+            **_processing_fields(), "segmented": False, "metrics": {},
+            "filename": scan.filename, "file_size": scan.size,
         })
-        return {
-            "success": True,
-            "confidence": metrics["confidence"],
-            "segmentationComplete": True,
-            "date": date,
-            "metrics": metrics,
-        }
+        self._store_scan_and_enqueue(patient_id, scan)
+        return {"status": PROCESSING}
 
     def resegment(self, patient_id: str, doctor_id: str) -> dict:
         patient = self.get(patient_id, doctor_id)
+        self._ensure_not_processing(patient)
         scan = self.get_file(patient_id, doctor_id, SCAN, "Scan file not found")
+        self._check_scan(io.BytesIO(scan.data))
 
-        metrics, mask_stream = self._segment(io.BytesIO(scan.data))
-        self.files.save(
-            patient_id, mask_stream, _mask_filename(patient.get("filename", "scan.nii.gz")), MASK
-        )
-        return self.patients.update(patient_id, {"metrics": metrics})
+        updated = self.patients.update(patient_id, _processing_fields())
+        self._enqueue(patient_id, scan.data, patient.get("filename") or "scan.nii.gz")
+        return updated
 
     def update(self, patient_id: str, doctor_id: str, updates: dict) -> dict:
         self.get(patient_id, doctor_id)
@@ -140,29 +142,91 @@ class PatientService:
 
     def delete(self, patient_id: str, doctor_id: str) -> None:
         self.get(patient_id, doctor_id)
+        self.files.delete_all(patient_id)
         self.patients.delete(patient_id)
+
+    # --- background job ----------------------------------------------------
+
+    def run_segmentation(self, patient_id: str, scan_bytes: bytes, scan_filename: str) -> None:
+        """The background job. Records its outcome on the patient; never raises."""
+        started = time.perf_counter()
+        try:
+            metrics, mask_stream = self._segmenter_provider().segment(io.BytesIO(scan_bytes))
+            self.files.save(patient_id, mask_stream, _mask_filename(scan_filename), MASK)
+        except Exception as error:
+            logger.exception("Segmentation failed for patient %s", patient_id)
+            message = str(error) if isinstance(error, InvalidScanError) else SEGMENTATION_FAILED
+            self.patients.update(patient_id, {"status": FAILED, "segmentation_error": message})
+            return
+
+        self.patients.update(patient_id, {
+            "status": COMPLETED, "segmented": True, "metrics": metrics,
+            "segmentation_error": None, "date": _today(),
+        })
+        logger.info("Patient %s segmented in %.1fs", patient_id, time.perf_counter() - started)
 
     # --- helpers -----------------------------------------------------------
 
-    @staticmethod
-    def _convert(dicom_files) -> NiftiScan:
+    def _prepare_scan(self, dicom_files) -> NiftiScan:
+        """Convert and validate in the request, so bad uploads fail immediately."""
         max_files = current_app.config["MAX_DICOM_FILES"]
         if len(dicom_files) > max_files:
             raise ValidationError(f"Too many files: at most {max_files} DICOM slices per upload")
         try:
-            return convert_dicom_series(dicom_files)
+            scan = convert_dicom_series(dicom_files)
         except DicomConversionError as error:
             raise ValidationError(str(error)) from error
+        self._check_scan(scan.stream)
+        return scan
 
-    def _segment(self, stream) -> tuple[dict, io.BytesIO]:
+    def _check_scan(self, stream: io.BytesIO) -> None:
         try:
-            return self._segmenter_provider().segment(stream)
+            self._segmenter_provider().check_scan(stream)
         except InvalidScanError as error:
             raise ValidationError(str(error)) from error
 
-    def _store_results(self, patient_id: str, scan: NiftiScan, mask_stream) -> None:
-        self.files.save(patient_id, scan.stream, scan.filename, SCAN)
-        self.files.save(patient_id, mask_stream, _mask_filename(scan.filename), MASK)
+    def _store_scan_and_enqueue(self, patient_id: str, scan: NiftiScan) -> None:
+        try:
+            self.files.save(patient_id, scan.stream, scan.filename, SCAN)
+        except Exception:
+            self.patients.update(patient_id, {
+                "status": FAILED, "segmentation_error": "The scan could not be saved.",
+            })
+            raise
+        self._enqueue(patient_id, scan.stream.getvalue(), scan.filename)
+
+    def _enqueue(self, patient_id: str, scan_bytes: bytes, scan_filename: str) -> None:
+        try:
+            self._job_queue_provider().submit(
+                lambda: self.run_segmentation(patient_id, scan_bytes, scan_filename)
+            )
+        except Exception as error:
+            # e.g. the queue is full: the scan is stored, the user can re-segment later.
+            self.patients.update(patient_id, {
+                "status": FAILED, "segmentation_error": getattr(error, "message", str(error)),
+            })
+            raise
+
+    @staticmethod
+    def _ensure_not_processing(patient: dict) -> None:
+        if patient.get("status") == PROCESSING:
+            raise ConflictError("Segmentation is already in progress for this patient")
+
+    def _expire_if_stale(self, patient: dict) -> dict:
+        """A job still `processing` long after it started was lost (e.g. the server
+        restarted): report it as failed instead of leaving it spinning forever."""
+        started = patient.get("processing_started_at")
+        if patient.get("status") != PROCESSING or not started:
+            return patient
+        stale_after = current_app.config["JOB_STALE_AFTER_MINUTES"] * 60
+        if time.time() - float(started) < stale_after:
+            return patient
+        logger.warning("Marking stale segmentation job of patient %s as failed", patient["id"])
+        changes = {"status": FAILED, "segmentation_error": PROCESSING_INTERRUPTED}
+        self.patients.update(patient["id"], changes)
+        return {**patient, **changes}
 
 
-patient_service = PatientService(PatientRepository(), FirestoreFileStorage(), get_segmenter)
+patient_service = PatientService(
+    PatientRepository(), FirestoreFileStorage(), get_segmenter, get_job_queue
+)

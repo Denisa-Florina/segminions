@@ -1,4 +1,4 @@
-"""Shared resources initialised once per process: the Firestore client and the AI model."""
+"""Shared resources initialised once per process: Firestore, the AI model, the job queue."""
 
 import json
 import logging
@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 _db = None
 _segmenter = None
+_job_queue = None
 
 
 def init_firebase(app) -> None:
@@ -40,6 +41,15 @@ def init_segmenter(app) -> None:
     )
 
 
+def init_job_queue(app) -> None:
+    global _job_queue
+    from app.core.job_queue import JobQueue
+
+    _job_queue = JobQueue(
+        max_pending=app.config["MAX_PENDING_JOBS"], inline=app.config["RUN_JOBS_INLINE"]
+    )
+
+
 def get_db():
     if _db is None:
         raise RuntimeError("Firestore is not initialised. Call init_firebase() first.")
@@ -50,3 +60,9 @@ def get_segmenter():
     if _segmenter is None:
         raise RuntimeError("Segmenter is not initialised. Call init_segmenter() first.")
     return _segmenter
+
+
+def get_job_queue():
+    if _job_queue is None:
+        raise RuntimeError("Job queue is not initialised. Call init_job_queue() first.")
+    return _job_queue

@@ -76,13 +76,15 @@ def test_create_assigns_patient_to_authenticated_doctor(client, patients, auth_h
     assert patients[created_id]["doctor_id"] == "doctor-1"
 
 
-def test_update_and_delete_own_patient(app, client, patients, auth_headers):
+def test_update_and_delete_own_patient(app, client, patients, files, auth_headers):
     response = client.put("/api/patients/p1", json={"name": "Ion Pop"}, headers=auth_headers)
     assert response.status_code == 200
     assert patients["p1"]["name"] == "Ion Pop"
 
+    files["p1"] = {"scan_data": object()}
     assert client.delete("/api/patients/p1", headers=auth_headers).status_code == 200
     assert "p1" not in patients
+    assert "p1" not in files            # stored scan/mask removed too
 
 
 def test_doctor_2_cannot_see_doctor_1_patients(app, client, patients):
@@ -155,13 +157,19 @@ def test_patient_summary_json_uses_camel_case():
     assert PatientSummary.from_db(PATIENT).to_json() == {
         "id": "p1", "name": "Ion", "age": 40, "date": "2026-11-25",
         "dicomFile": "scan.dcm", "status": "completed", "confidence": 0.8, "simulated": False,
+        "segmentationError": None,
     }
 
 
-def test_patient_summary_status_when_not_segmented():
-    unsegmented = {**PATIENT, "segmented": False}
-    assert PatientSummary.from_db(unsegmented).status == "processing"
-    assert PatientSummary.from_db(unsegmented, unsegmented_status="pending").status == "pending"
+def test_patient_status_is_read_from_the_database():
+    failed = {**PATIENT, "status": "failed", "segmentation_error": "boom"}
+    assert PatientSummary.from_db(failed).status == "failed"
+    assert PatientSummary.from_db(failed).to_json()["segmentationError"] == "boom"
+
+
+def test_status_of_patients_created_before_statuses_were_stored():
+    assert PatientSummary.from_db(PATIENT).status == "completed"
+    assert PatientSummary.from_db({**PATIENT, "segmented": False}).status == "pending"
 
 
 def test_patient_detail_keeps_metrics_as_stored():

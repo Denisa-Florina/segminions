@@ -1,4 +1,5 @@
 import React from 'react';
+import StatusBadge from '../patients/StatusBadge';
 import { Users, CheckCircle, BarChart3, Clock, TrendingUp, User } from 'lucide-react';
 
 function DashboardView({ stats, patients, onViewPatient, loading }) {
@@ -87,13 +88,7 @@ function DashboardView({ stats, patients, onViewPatient, loading }) {
                   </div>
                 </div>
                 <div className="text-right">
-                  <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
-                    patient.status === 'completed' 
-                      ? 'bg-green-600/20 text-green-400' 
-                      : 'bg-yellow-600/20 text-yellow-400'
-                  }`}>
-                    {patient.status === 'completed' ? 'Completat' : 'In procesare'}
-                  </span>
+                  <StatusBadge status={patient.status} />
                 </div>
               </div>
             ))}

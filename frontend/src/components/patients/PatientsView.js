@@ -1,6 +1,7 @@
 import React from 'react';
 import { Plus, Search, User } from 'lucide-react';
 import ConfidenceValue from './ConfidenceValue';
+import StatusBadge from './StatusBadge';
 
 function PatientsView({ patients, searchTerm, setSearchTerm, onViewPatient, onAddPatient, loading }) {
   if (loading) {
@@ -74,13 +75,7 @@ function PatientsView({ patients, searchTerm, setSearchTerm, onViewPatient, onAd
                     <p className="text-sm text-gray-400">{patient.age} ani</p>
                   </div>
                 </div>
-                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                  patient.status === 'completed' 
-                    ? 'bg-green-600/20 text-green-400' 
-                    : 'bg-yellow-600/20 text-yellow-400'
-                }`}>
-                  {patient.status === 'completed' ? 'Completat' : 'Processing'}
-                </span>
+                <StatusBadge status={patient.status} />
               </div>
 
               <div className="space-y-2 text-sm">

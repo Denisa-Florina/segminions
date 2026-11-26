@@ -1,4 +1,5 @@
 import hashlib
+from io import BytesIO
 
 import pytest
 
@@ -7,6 +8,7 @@ from app.config import TestingConfig
 from app.core.security import create_access_token
 from app.services.auth_service import auth_service
 from app.services.patient_service import patient_service
+from app.storage.file_storage import StoredFile
 
 PASSWORD = "correct-password"
 LEGACY_SHA256_HASH = hashlib.sha256(PASSWORD.encode()).hexdigest()
@@ -83,3 +85,48 @@ def patients(monkeypatch):
     monkeypatch.setattr(repo, "update", update)
     monkeypatch.setattr(repo, "delete", lambda pid: store.pop(pid, None))
     return store
+
+
+@pytest.fixture
+def files(monkeypatch):
+    """In-memory replacement for scan/mask storage: {patient_id: {key: StoredFile}}."""
+    store: dict[str, dict[str, StoredFile]] = {}
+
+    def save(patient_id, stream, filename, key):
+        data = stream.getvalue()
+        store.setdefault(patient_id, {})[key] = StoredFile(data, filename, len(data))
+
+    storage = patient_service.files
+    monkeypatch.setattr(storage, "save", save)
+    monkeypatch.setattr(storage, "load",
+                        lambda patient_id, key: store.get(patient_id, {}).get(key))
+    monkeypatch.setattr(storage, "delete",
+                        lambda patient_id, key: store.get(patient_id, {}).pop(key, None))
+    monkeypatch.setattr(storage, "delete_all", lambda patient_id: store.pop(patient_id, None))
+    return store
+
+
+class FakeSegmenter:
+    """Stands in for the AI model: returns fixed metrics and a small mask."""
+
+    def __init__(self):
+        self.fail_with: Exception | None = None
+        self.reject_with: Exception | None = None
+        self.segmented = 0
+
+    def check_scan(self, stream):
+        if self.reject_with:
+            raise self.reject_with
+
+    def segment(self, stream):
+        if self.fail_with:
+            raise self.fail_with
+        self.segmented += 1
+        return {"confidence": 0.87, "voxel_count": 12}, BytesIO(b"mask-bytes")
+
+
+@pytest.fixture
+def segmenter(monkeypatch):
+    fake = FakeSegmenter()
+    monkeypatch.setattr(patient_service, "_segmenter_provider", lambda: fake)
+    return fake

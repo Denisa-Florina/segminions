@@ -1,29 +1,74 @@
-import React, { useState } from 'react';
-import { User, Upload, FileText, CheckCircle, ArrowLeft, Download } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { User, Upload, CheckCircle, ArrowLeft, Download, AlertTriangle, RefreshCw } from 'lucide-react';
 import patientService from '../../services/patientService';
 import ConfidenceValue from './ConfidenceValue';
+import StatusBadge from './StatusBadge';
 
-function PatientProfile({ patient, onBack, onUpdate }) {
+const POLL_INTERVAL_MS = 3000;
+
+function PatientProfile({ patient: initialPatient, onBack, onUpdate }) {
+  const [patient, setPatient] = useState(initialPatient);
   const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState(null);
+  const [requestError, setRequestError] = useState('');
   const [downloading, setDownloading] = useState(false);
+  const isProcessing = patient.status === 'processing';
+
+  // Keep the latest callback without restarting the polling timer on every render.
+  const onUpdateRef = useRef(onUpdate);
+  useEffect(() => { onUpdateRef.current = onUpdate; }, [onUpdate]);
+
+  // The list only has a summary: load the full patient (metrics, error message).
+  useEffect(() => {
+    setPatient(initialPatient);
+    patientService.getPatient(initialPatient.id)
+      .then(setPatient)
+      .catch(err => console.error('Error loading patient:', err));
+  }, [initialPatient]);
+
+  // Segmentation runs in the background: poll until it completes or fails.
+  useEffect(() => {
+    if (!isProcessing) return undefined;
+    const timer = setInterval(async () => {
+      try {
+        const latest = await patientService.getPatient(patient.id);
+        setPatient(latest);
+        if (latest.status !== 'processing') onUpdateRef.current();
+      } catch (err) {
+        console.error('Error refreshing patient:', err);
+      }
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [isProcessing, patient.id]);
+
+  const startProcessing = () => {
+    setPatient(p => ({ ...p, status: 'processing', segmentationError: null }));
+    onUpdateRef.current();
+  };
 
   const handleFileUpload = async (e) => {
     const files = Array.from(e.target.files);
+    e.target.value = '';   // allow selecting the same files again
     if (files.length === 0) return;
 
     setUploading(true);
-    setUploadResult(null);
-
+    setRequestError('');
     try {
-      const result = await patientService.uploadDicom(patient.id, files);
-      setUploadResult(result);
-      onUpdate();
+      await patientService.uploadDicom(patient.id, files);
+      startProcessing();
     } catch (err) {
-      alert('Eroare la încărcare: ' + err.message);
+      setRequestError(err.message);
     } finally {
       setUploading(false);
-      patient.status = 'completed';
+    }
+  };
+
+  const handleResegment = async () => {
+    setRequestError('');
+    try {
+      await patientService.reSegmentPatient(patient.id);
+      startProcessing();
+    } catch (err) {
+      setRequestError(err.message);
     }
   };
 
@@ -93,13 +138,7 @@ function PatientProfile({ patient, onBack, onUpdate }) {
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Status:</span>
-                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                  patient.status === 'completed' 
-                    ? 'bg-green-600/20 text-green-400' 
-                    : 'bg-yellow-600/20 text-yellow-400'
-                }`}>
-                  {patient.status === 'completed' ? 'Completat' : 'In procesare'}
-                </span>
+                <StatusBadge status={patient.status} />
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Confidence:</span>
@@ -120,34 +159,65 @@ function PatientProfile({ patient, onBack, onUpdate }) {
             <h3 className="text-xl font-bold text-white mb-4">
               Încarcă fișiere DICOM pentru predicție
             </h3>
-            
+
             <label className="block">
               <div className="border-2 border-dashed border-gray-600 rounded-xl p-8 text-center hover:border-blue-500 transition cursor-pointer">
                 <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                 <p className="text-white font-medium mb-2">
-                  {uploading ? 'Se procesează...' : 'Click pentru a încărca fișier DICOM'}
+                  {uploading ? 'Se încarcă scanarea...'
+                    : isProcessing ? 'Segmentare în curs...'
+                    : 'Click pentru a încărca fișier DICOM'}
                 </p>
                 <p className="text-sm text-gray-400">Formatul acceptat: .dcm</p>
                 <input
                   type="file"
                   accept=".dcm" multiple
                   onChange={handleFileUpload}
-                  disabled={uploading}
+                  disabled={uploading || isProcessing}
                   className="hidden"
                 />
               </div>
             </label>
 
-            {uploading && (
+            {(uploading || isProcessing) && (
               <div className="mt-4 bg-blue-600/20 border border-blue-500 rounded-lg p-4">
                 <div className="flex items-center gap-3">
                   <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-blue-400">Se procesează segmentarea...</span>
+                  <span className="text-blue-400">
+                    {uploading
+                      ? 'Se încarcă și se verifică scanarea...'
+                      : 'Segmentarea rulează în fundal și poate dura câteva minute. Poți părăsi pagina.'}
+                  </span>
                 </div>
               </div>
             )}
 
-            {uploadResult && (
+            {requestError && (
+              <div className="mt-4 bg-red-600/20 border border-red-500 rounded-lg p-4 text-sm text-red-300">
+                {requestError}
+              </div>
+            )}
+
+            {patient.status === 'failed' && (
+              <div className="mt-4 bg-red-600/20 border border-red-500 rounded-lg p-4">
+                <div className="flex items-center gap-3 mb-2">
+                  <AlertTriangle className="w-5 h-5 text-red-400" />
+                  <span className="text-red-400 font-medium">Segmentarea a eșuat</span>
+                </div>
+                <p className="text-sm text-gray-300 mb-3">
+                  {patient.segmentationError || 'A apărut o eroare la procesare.'}
+                </p>
+                <button
+                  onClick={handleResegment}
+                  className="flex items-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Reîncearcă segmentarea
+                </button>
+              </div>
+            )}
+
+            {patient.status === 'completed' && (
               <div className="mt-4 bg-green-600/20 border border-green-500 rounded-lg p-4">
                 <div className="flex items-center gap-3 mb-2">
                   <CheckCircle className="w-5 h-5 text-green-400" />
@@ -155,10 +225,7 @@ function PatientProfile({ patient, onBack, onUpdate }) {
                 </div>
                 <p className="text-sm text-gray-300">
                   Confidence:{' '}
-                  <ConfidenceValue
-                    confidence={uploadResult.confidence}
-                    simulated={uploadResult.metrics?.simulated}
-                  />
+                  <ConfidenceValue confidence={patient.confidence} simulated={patient.simulated} />
                 </p>
               </div>
             )}
@@ -167,7 +234,7 @@ function PatientProfile({ patient, onBack, onUpdate }) {
           {/* Results Section */}
           <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
             <h3 className="text-xl font-bold text-white mb-4">Rezultate Segmentare</h3>
-            
+
             {/* <div className="bg-gray-700/50 rounded-lg p-4 mb-4">
               <div className="aspect-video bg-gray-900 rounded-lg flex items-center justify-center">
                 <FileText className="w-16 h-16 text-gray-600" />
@@ -182,6 +249,14 @@ function PatientProfile({ patient, onBack, onUpdate }) {
                 <p className="text-sm text-gray-400 mb-1">Confidence Score</p>
                 <p className="text-2xl font-bold text-white">
                   <ConfidenceValue confidence={patient.confidence} simulated={patient.simulated} />
+                </p>
+              </div>
+              <div className="bg-gray-700/50 rounded-lg p-4">
+                <p className="text-sm text-gray-400 mb-1">Volum segmentat</p>
+                <p className="text-2xl font-bold text-white">
+                  {patient.metrics?.volume_mm3 != null
+                    ? `${patient.metrics.volume_mm3.toLocaleString('ro-RO')} mm³`
+                    : '—'}
                 </p>
               </div>
               {/* <div className="bg-gray-700/50 rounded-lg p-4">
@@ -201,7 +276,7 @@ function PatientProfile({ patient, onBack, onUpdate }) {
             {patient.status === 'completed' && (
               <div className="space-y-3">
                 <h4 className="text-sm font-semibold text-gray-400 mb-3">Descarcă Rezultate:</h4>
-                
+
                 <button
                   onClick={handleDownloadScan}
                   disabled={downloading}

@@ -8,7 +8,7 @@ from flask_cors import CORS
 from app.api import register_blueprints
 from app.config import Config, get_config
 from app.core.errors import register_error_handlers
-from app.extensions import init_firebase, init_segmenter
+from app.extensions import init_firebase, init_job_queue, init_segmenter
 
 
 def create_app(config_class: type[Config] | None = None) -> Flask:
@@ -36,6 +36,7 @@ def create_app(config_class: type[Config] | None = None) -> Flask:
         init_firebase(app)
     if app.config["LOAD_MODEL"]:
         init_segmenter(app)
+    init_job_queue(app)
 
     register_error_handlers(app)
     register_blueprints(app)

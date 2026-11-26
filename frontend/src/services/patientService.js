@@ -1,7 +1,8 @@
 import api from './api';
 
-// Requests that run the AI model can take minutes on a small server CPU.
-const SEGMENTATION_TIMEOUT_MS = 5 * 60 * 1000;
+// Segmentation runs in the background, so requests return quickly; only uploading
+// large DICOM series needs more than the default timeout.
+const UPLOAD_TIMEOUT_MS = 2 * 60 * 1000;
 
 export const patientService = {
   async getPatients() {
@@ -28,7 +29,7 @@ export const patientService = {
       headers: {
         'Content-Type': 'multipart/form-data'
       },
-      timeout: SEGMENTATION_TIMEOUT_MS
+      timeout: UPLOAD_TIMEOUT_MS
     });
     return response.data.patient;
   },
@@ -55,16 +56,14 @@ export const patientService = {
       headers: {
         'Content-Type': 'multipart/form-data'
       },
-      timeout: SEGMENTATION_TIMEOUT_MS
+      timeout: UPLOAD_TIMEOUT_MS
     });
     
     return response.data.result;
   },
 
   async reSegmentPatient(patientId) {
-    const response = await api.post(`/patients/${patientId}/re-segment`, null, {
-      timeout: SEGMENTATION_TIMEOUT_MS
-    });
+    const response = await api.post(`/patients/${patientId}/re-segment`);
     return response.data.patient;
   },
 

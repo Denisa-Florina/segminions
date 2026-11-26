@@ -65,17 +65,20 @@ class PatientSummary(BaseModel):
     age: int
     date: str
     dicom_file: str = ""
-    status: Literal["completed", "processing", "pending"]
+    status: Literal["pending", "processing", "completed", "failed"]
     confidence: float = 0
     simulated: bool = False
+    segmentation_error: str | None = None
 
     @classmethod
-    def from_db(cls, patient: dict, unsegmented_status: str = "processing"):
+    def from_db(cls, patient: dict):
         metrics = patient.get("metrics") or {}
+        # Patients created before statuses were stored: derive it from `segmented`.
+        status = patient.get("status") or ("completed" if patient.get("segmented") else "pending")
         return cls.model_validate({
             **patient,
             "metrics": metrics,
-            "status": "completed" if patient.get("segmented") else unsegmented_status,
+            "status": status,
             "confidence": metrics.get("confidence", 0),
             "simulated": bool(metrics.get("simulated")),
         })

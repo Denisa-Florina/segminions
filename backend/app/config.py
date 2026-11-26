@@ -43,6 +43,13 @@ class Config:
     # the app refuses to start instead of showing fake results.
     ALLOW_SIMULATION = _env_flag("ALLOW_SIMULATION", False)
 
+    # Background segmentation: scans waiting or running at once (one runs at a time),
+    # and after how long a job still marked "processing" is considered lost, e.g. after
+    # a server restart.
+    MAX_PENDING_JOBS = int(os.environ.get("MAX_PENDING_JOBS", 3))
+    JOB_STALE_AFTER_MINUTES = int(os.environ.get("JOB_STALE_AFTER_MINUTES", 20))
+    RUN_JOBS_INLINE = False
+
     INIT_FIREBASE = True
     LOAD_MODEL = True
     LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
@@ -64,6 +71,7 @@ class TestingConfig(Config):
     INIT_FIREBASE = False
     LOAD_MODEL = False
     ALLOW_SIMULATION = True
+    RUN_JOBS_INLINE = True
 
 
 _CONFIGS = {
