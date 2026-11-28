@@ -7,7 +7,6 @@ from app.core.clock import utc_now
     ("get", "/api/patients"),
     ("post", "/api/patients/"),
     ("get", "/api/patients/p1"),
-    ("put", "/api/patients/p1"),
     ("delete", "/api/patients/p1"),
     ("post", "/api/patients/p1/upload-dicom"),
     ("post", "/api/patients/p1/re-segment"),
@@ -21,7 +20,6 @@ def test_every_patient_endpoint_requires_a_token(client, method, url):
 
 @pytest.mark.parametrize("method, url, kwargs", [
     ("get", "/api/patients/p2", {}),
-    ("put", "/api/patients/p2", {"json": {"name": "Hacked"}}),
     ("delete", "/api/patients/p2", {}),
     ("post", "/api/patients/p2/re-segment", {}),
     ("get", "/api/patients/p2/download/scan", {}),
@@ -57,5 +55,5 @@ def test_delete_removes_the_stored_files_but_not_while_processing(
     assert client.delete("/api/patients/p1", headers=auth_headers).status_code == 409
 
     patients["p1"]["status"] = "completed"
-    assert client.delete("/api/patients/p1", headers=auth_headers).status_code == 200
+    assert client.delete("/api/patients/p1", headers=auth_headers).status_code == 204
     assert "p1" not in patients and "p1" not in files

@@ -53,13 +53,12 @@ The main remaining weaknesses:
 | 2.1 | Services depend on Flask (`current_app`) | 🟠 |
 | 2.2 | Global singletons and module-level wiring | 🟠 |
 | 2.3 | Two classes own the same Firestore document | 🟠 |
-| 2.4 | Persistence concerns (legacy fields) live in API schemas | 🟡 |
-| 2.5 | API layer imports storage constants | 🟡 |
+| 2.4 | API layer imports storage constants | 🟡 |
 | 3.1 | Primitive obsession: dicts and strings instead of domain types | 🟠 |
 | 3.2 | `PatientService` has too many responsibilities | 🟡 |
 | 3.3 | Services depend on concrete classes, not abstractions | 🟡 |
 | 3.4 | Simulation handled with `if` branches instead of polymorphism | 🟡 |
-| 4.x | Duplication, naming, two sources of truth for status | 🟡 / ⚪ |
+| 4.x | Duplication, naming | 🟡 / ⚪ |
 | 5.1 | File writes are not atomic | 🟡 |
 | 5.2 | Downloads load whole files (and their base64 copy) into memory | 🟡 |
 | 6.1 | Jobs are not recovered after a restart | 🟡 |
@@ -150,21 +149,10 @@ so the encapsulation is broken. It is also why the storage cannot really be repl
 changing one module", as its docstring claims.
 
 **Fix:** give files their own collection (`files/{patient_id}_{kind}` with chunks
-underneath). The patient document then holds no file data at all. A later move to Cloud Storage really does touch only `storage/`.
+underneath). The patient document then holds no file data at all, and a later move to
+Cloud Storage really does touch only `storage/`.
 
-### 2.4 🟡 Persistence concerns live in the API schemas
-
-**Where:** [app/schemas/patient.py:73-85](app/schemas/patient.py#L73-L85)
-
-`PatientSummary.from_db` contains legacy fallbacks (`dicom_file` vs `filename`, and a
-status derived from `segmented`). Mapping database rows to objects belongs to the
-persistence layer. Legacy fallbacks should not live in code forever either.
-
-**Fix:** move the mapping into the repository, which returns a `Patient` domain object
-(see 3.1). Write a one-off migration script that backfills `status` and renames the old
-fields, then delete the fallbacks.
-
-### 2.5 🟡 The API layer imports storage constants
+### 2.4 🟡 The API layer imports storage constants
 
 **Where:** [app/api/patients.py:15](app/api/patients.py#L15)
 
@@ -185,7 +173,7 @@ Patients, metrics and statuses are passed around as `dict` and `str`:
 - the status strings are defined in [patient_service.py:31](app/services/patient_service.py#L31),
   repeated as a `Literal` in [schemas/patient.py:68](app/schemas/patient.py#L68), and
   again in the frontend;
-- the dict keys (`"metrics"`, `"segmented"`, `"processing_started_at"`, `"doctor_id"`)
+- the dict keys (`"metrics"`, `"status"`, `"processing_started_at"`, `"doctor_id"`)
   are typed by hand in many places, and a typo fails silently (`patient.get("staus")`
   returns `None`);
 - the rules that belong to a patient, such as "is it owned by this doctor?", "can a job
@@ -288,40 +276,23 @@ process-wide configuration belongs.
 
 ## 4. Clean code
 
-### 4.1 🟡 Two sources of truth for the patient's state
-
-`segmented` and `status` describe overlapping facts and are updated separately
-([patient_service.py:100](app/services/patient_service.py#L100),
-[:120](app/services/patient_service.py#L120),
-[:163](app/services/patient_service.py#L163)). Sooner or later they will disagree, for
-example `segmented=True` with `status="failed"`. Keep `status` and derive "has a mask"
-from the stored files, or from `status == COMPLETED`.
-
-### 4.2 🟡 Repeated "mark failed" code (DRY)
+### 4.1 🟡 Repeated "mark failed" code (DRY)
 
 `_mark_failed` exists, but `{"status": FAILED, "segmentation_error": ...}` is still
 written by hand in `run_segmentation`
-([:173](app/services/patient_service.py#L173), [:187](app/services/patient_service.py#L187))
-and in `_expire_if_stale` ([:279](app/services/patient_service.py#L279)). Better:
+([:172](app/services/patient_service.py#L172), [:186](app/services/patient_service.py#L186))
+and in `_expire_if_stale` ([:278](app/services/patient_service.py#L278)). Better:
 `patient.fail(message)` on the domain object (see 3.1).
 
-### 4.3 🟡 Ambiguous names
+### 4.2 🟡 Ambiguous names
 
 | Name | Problem | Suggestion |
 |---|---|---|
-| `date` | Set at creation **and overwritten on every segmentation** ([:164](app/services/patient_service.py#L164)), so it is neither "created" nor "scan date" | `scan_date` (from DICOM `StudyDate`) and `segmented_at` |
+| `date` | Set at creation **and overwritten on every segmentation** ([:192](app/services/patient_service.py#L192)), so it is neither "created" nor "scan date" | `scan_date` (from DICOM `StudyDate`) and `segmented_at` |
 | `filename` | A generated name (`<first file>_16slices.nii.gz`), not the uploaded file | `scan_filename` |
 | `file_size` | The size of the converted NIfTI, not the upload | `scan_size_bytes` |
-| `artery_detected` | The model's label in `dataset.json` is `"tumor"` | Use the label name from `dataset.json` |
-| `coverage` | Share of the whole volume. It depends on the crop size and has no clinical meaning | Remove, or document what it is for |
 
-### 4.4 🟡 Magic threshold in voxels
-
-[app/ml/metrics.py:5](app/ml/metrics.py#L5): `ARTERY_MIN_VOXELS = 50`. The physical volume
-of 50 voxels depends on the scan's resolution (50 voxels at 0.4 mm ≈ 3 mm³, at 1 mm =
-50 mm³). Define the threshold in **mm³** and compare it with `volume_mm3`.
-
-### 4.5 ⚪ Smaller items
+### 4.3 ⚪ Smaller items
 
 - [schemas/patient.py:22](app/schemas/patient.py#L22): `validate_input` reports only the
   first validation error. Return them all (for example as `details`), so that a form can
@@ -513,19 +484,16 @@ essential for any medical or research use.
 
 | Endpoint | Returns |
 |---|---|
-| `POST /patients/` | `{"message", "patient": Summary}` |
-| `POST /patients/<id>/upload-dicom` | `{"message", "result": {"status"}}` |
-| `POST /patients/<id>/re-segment` | `{"message", "patient": Detail}` |
-| `PUT /patients/<id>` | `{"message", "patient": raw dict}` |
+| `POST /patients/` | `{"patient": Summary}` |
+| `POST /patients/<id>/upload-dicom` | `{"result": {"status"}}` |
+| `POST /patients/<id>/re-segment` | `{"patient": Detail}` |
 
-A client has to know each shape separately. Return the same patient representation from
-every endpoint that changes a patient. The `message` fields are UI text, so the frontend
-should own them.
+A client has to know each shape separately. Return the same patient representation
+(`PatientDetail`) from every endpoint that changes a patient.
 
 ### 9.2 ⚪ Resource-oriented URLs
 
-`/upload-dicom` and `/re-segment` are verbs, and `/download` is a legacy alias
-([patients.py:84](app/api/patients.py#L84)). A more RESTful layout:
+`/upload-dicom` and `/re-segment` are verbs. A more RESTful layout:
 
 | Current | Suggested |
 |---|---|
@@ -612,8 +580,7 @@ These are worth pointing out in an interview.
   start that refuses to run without `SECRET_KEY` or a model.
 - **Typed application exceptions** mapped to HTTP status codes in one place. Unexpected
   errors are logged and never leaked to clients.
-- **Authentication and authorization**: JWT, bcrypt with transparent migration of the
-  legacy hashes, the same error for an unknown email and a wrong password (and the same
+- **Authentication and authorization**: JWT, bcrypt password hashes, the same error for an unknown email and a wrong password (and the same
   response time), and ownership checks that answer `404` for another doctor's patients.
 - **Input validation with Pydantic** at the API boundary.
 - **A faithful re-implementation of nnU-Net's 2D inference** (HU conversion,

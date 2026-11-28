@@ -15,14 +15,14 @@ class DoctorRepository:
             return {"id": doc.id, **doc.to_dict()}
         return None
 
+    def create(self, data: dict) -> dict:
+        doc_ref = self._collection().document()
+        doc_ref.set(data)
+        return {"id": doc_ref.id, **data}
+
     def get_by_id(self, doctor_id: str) -> dict | None:
         doc = self._collection().document(doctor_id).get()
         if not doc.exists:
             return None
         return {"id": doc.id, **doc.to_dict()}
 
-    def update_password_hash(self, doctor_id: str, password_hash: str) -> None:
-        self._collection().document(doctor_id).update({"password": password_hash})
-
-    def update_email(self, doctor_id: str, email: str) -> None:
-        self._collection().document(doctor_id).update({"email": email})

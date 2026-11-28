@@ -178,7 +178,6 @@ function PatientProfile() {
           </div>
 
           <dl className="space-y-3 border-t border-gray-700 pt-6 text-sm">
-            <InfoRow label="Patient ID"><span className="font-mono text-xs text-gray-300">{patient.id}</span></InfoRow>
             <InfoRow label="Scan date">{formatDate(patient.date)}</InfoRow>
             <InfoRow label="Status"><StatusBadge status={patient.status} /></InfoRow>
             <InfoRow label="Confidence">

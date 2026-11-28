@@ -2,14 +2,11 @@ import io
 
 from flask import Blueprint, jsonify, request, send_file
 
-from app.core.errors import ValidationError
 from app.core.security import current_doctor_id, require_authentication
-from app.ml.nifti_io import ensure_gzipped
 from app.schemas.patient import (
     PatientCreate,
     PatientDetail,
     PatientSummary,
-    PatientUpdate,
     validate_input,
 )
 from app.services.patient_service import patient_service
@@ -40,10 +37,7 @@ def create_patient():
         "doctor_id": current_doctor_id(),
     })
     patient = patient_service.create(data, request.files.getlist("dicom_file"))
-    return jsonify({
-        "message": "Patient created successfully",
-        "patient": PatientSummary.from_db(patient).to_json(),
-    }), 201
+    return jsonify({"patient": PatientSummary.from_db(patient).to_json()}), 201
 
 
 @patients_bp.post("/<patient_id>/upload-dicom")
@@ -51,41 +45,22 @@ def upload_dicom(patient_id):
     result = patient_service.upload_scan(
         patient_id, current_doctor_id(), request.files.getlist("dicom_file")
     )
-    return jsonify({"message": "Scan uploaded, segmentation started", "result": result}), 202
-
-
-@patients_bp.put("/<patient_id>")
-def update_patient(patient_id):
-    body = request.get_json(silent=True)
-    if not body:
-        raise ValidationError("No data provided")
-    updates = validate_input(PatientUpdate, body)
-
-    changes = updates.model_dump(exclude_unset=True, exclude_none=True)
-    patient = patient_service.update(patient_id, current_doctor_id(), changes)
-    return jsonify({
-        "message": "Patient updated successfully",
-        "patient": PatientDetail.from_db(patient).to_json(),
-    }), 200
+    return jsonify({"result": result}), 202
 
 
 @patients_bp.delete("/<patient_id>")
 def delete_patient(patient_id):
     patient_service.delete(patient_id, current_doctor_id())
-    return jsonify({"message": "Patient deleted successfully"}), 200
+    return "", 204
 
 
 @patients_bp.post("/<patient_id>/re-segment")
 def resegment_patient(patient_id):
     patient = patient_service.resegment(patient_id, current_doctor_id())
-    return jsonify({
-        "message": "Re-segmentation started",
-        "patient": PatientDetail.from_db(patient).to_json(),
-    }), 202
+    return jsonify({"patient": PatientDetail.from_db(patient).to_json()}), 202
 
 
 @patients_bp.get("/<patient_id>/download/scan")
-@patients_bp.get("/<patient_id>/download")
 def download_scan(patient_id):
     stored = patient_service.get_file(patient_id, current_doctor_id(), SCAN, "Scan file not found")
     return _send_gzip(stored.data, stored.filename or "scan.nii.gz")
@@ -106,8 +81,7 @@ def download_both(patient_id):
 
 
 def _send_gzip(data: bytes, filename: str):
-    # Files stored by earlier versions are uncompressed despite their .nii.gz name.
     return send_file(
-        io.BytesIO(ensure_gzipped(data)), mimetype="application/gzip",
+        io.BytesIO(data), mimetype="application/gzip",
         as_attachment=True, download_name=filename,
     )

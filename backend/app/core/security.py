@@ -1,7 +1,5 @@
 """Password hashing, access tokens (JWT) and the authentication guard for routes."""
 
-import hashlib
-import hmac
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -19,17 +17,9 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
-def is_legacy_hash(stored_hash: str) -> bool:
-    """True for the unsalted SHA-256 hashes created before the move to bcrypt."""
-    return not stored_hash.startswith("$2")
-
-
 def verify_password(password: str, stored_hash: str | None) -> bool:
     if not stored_hash:
         return False
-    if is_legacy_hash(stored_hash):
-        legacy = hashlib.sha256(password.encode()).hexdigest()
-        return hmac.compare_digest(legacy, stored_hash)
     return bcrypt.checkpw(password.encode(), stored_hash.encode())
 
 

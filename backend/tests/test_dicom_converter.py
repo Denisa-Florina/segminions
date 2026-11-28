@@ -7,7 +7,7 @@ from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
 from app.ml.dicom_converter import convert_dicom_series
-from app.ml.nifti_io import is_gzipped, read_nifti
+from app.ml.nifti_io import read_nifti
 
 ROWS, COLUMNS = 24, 32
 
@@ -82,7 +82,7 @@ def test_spacing_comes_from_pixel_spacing_and_slice_positions():
 def test_converted_scan_is_a_real_nii_gz_that_opens_with_nibabel(tmp_path):
     scan = convert_dicom_series([make_dicom_slice(z) for z in (0, 2)])
     data = scan.stream.getvalue()
-    assert is_gzipped(data)
+    assert data[:2] == b"\x1f\x8b"          # gzip magic number
 
     path = tmp_path / "scan.nii.gz"          # what a doctor does with a download
     path.write_bytes(data)

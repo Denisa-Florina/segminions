@@ -6,13 +6,13 @@ from app.core.clock import utc_now
 from app.extensions import get_db
 
 COLLECTION = "patients"
-_FILE_FIELDS = ("file_data", "scan_data", "mask_data")
+_FILE_FIELDS = ("scan_data", "mask_data")
 _TIMESTAMP_FIELDS = ("created_at", "updated_at")
 
 # What the patient list needs. Fetching only these fields keeps the scan and mask
 # (stored as base64 in the same document) out of every list request and every poll.
 _LIST_FIELDS = (
-    "name", "age", "date", "doctor_id", "filename", "dicom_file", "status", "segmented",
+    "name", "age", "date", "doctor_id", "filename", "status",
     "metrics", "segmentation_error", "job_id", "processing_started_at",
     "created_at", "updated_at",
 )

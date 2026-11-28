@@ -2,8 +2,6 @@
 
 import numpy as np
 
-ARTERY_MIN_VOXELS = 50
-
 
 def calculate_metrics(
     mask: np.ndarray, foreground_probability: np.ndarray, voxel_volume_mm3: float
@@ -27,6 +25,4 @@ def calculate_metrics(
         "confidence": round(confidence, 4),
         "voxel_count": voxel_count,
         "volume_mm3": round(voxel_count * voxel_volume_mm3, 1),
-        "coverage": round(voxel_count / mask.size, 4),
-        "artery_detected": voxel_count > ARTERY_MIN_VOXELS,
     }

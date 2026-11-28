@@ -2,15 +2,22 @@ import api, { TOKEN_KEY } from './api';
 
 const DOCTOR_KEY = 'doctor';
 
+function saveSession({ doctor, token }) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(DOCTOR_KEY, JSON.stringify(doctor));
+  return doctor;
+}
+
 export const authService = {
   async login(email, password) {
     const response = await api.post('/auth/login', { email, password });
-    const { doctor, token } = response.data;
+    return saveSession(response.data);
+  },
 
-    localStorage.setItem(TOKEN_KEY, token);
-    localStorage.setItem(DOCTOR_KEY, JSON.stringify(doctor));
-
-    return doctor;
+  /** Creates an account; the API signs the new doctor in straight away. */
+  async register(details) {
+    const response = await api.post('/auth/register', details);
+    return saveSession(response.data);
   },
 
   async logout() {

@@ -46,11 +46,6 @@ export const patientService = {
     return response.data.patient;
   },
 
-  async updatePatient(patientId, updates) {
-    const response = await api.put(`/patients/${patientId}`, updates);
-    return response.data.patient;
-  },
-
   async deletePatient(patientId) {
     await api.delete(`/patients/${patientId}`);
   },

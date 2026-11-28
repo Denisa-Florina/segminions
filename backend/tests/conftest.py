@@ -1,17 +1,16 @@
-import hashlib
 from io import BytesIO
 
 import pytest
 
 from app import create_app
 from app.config import TestingConfig
-from app.core.security import create_access_token
+from app.core.security import create_access_token, hash_password
 from app.services.auth_service import auth_service
 from app.services.patient_service import patient_service
 from app.storage.file_storage import StoredFile
 
 PASSWORD = "correct-password"
-LEGACY_SHA256_HASH = hashlib.sha256(PASSWORD.encode()).hexdigest()
+PASSWORD_HASH = hash_password(PASSWORD)
 
 
 @pytest.fixture
@@ -41,7 +40,7 @@ def doctors(monkeypatch):
     store = {
         "doctor-1": {
             "id": "doctor-1", "email": "doctor@example.com",
-            "name": "Dr. Test", "password": LEGACY_SHA256_HASH,
+            "name": "Dr. Test", "password": PASSWORD_HASH,
         },
     }
     repo = auth_service.doctors
@@ -49,10 +48,13 @@ def doctors(monkeypatch):
         (dict(d) for d in store.values() if d["email"] == email), None))
     monkeypatch.setattr(repo, "get_by_id", lambda doctor_id: dict(store[doctor_id])
                         if doctor_id in store else None)
-    monkeypatch.setattr(repo, "update_password_hash", lambda doctor_id, password_hash:
-                        store[doctor_id].update(password=password_hash))
-    monkeypatch.setattr(repo, "update_email", lambda doctor_id, email:
-                        store[doctor_id].update(email=email))
+
+    def create(data):
+        doctor = {"id": f"doctor-{len(store) + 1}", **data}
+        store[doctor["id"]] = doctor
+        return dict(doctor)
+
+    monkeypatch.setattr(repo, "create", create)
     return store
 
 
@@ -62,9 +64,9 @@ def patients(monkeypatch):
     p2 to doctor-2."""
     store = {
         "p1": {"id": "p1", "name": "Ion", "age": 40, "date": "2026-11-25",
-               "doctor_id": "doctor-1", "segmented": False, "metrics": {"confidence": 0}},
+               "doctor_id": "doctor-1", "status": "pending", "metrics": {}},
         "p2": {"id": "p2", "name": "Maria", "age": 55, "date": "2026-11-25",
-               "doctor_id": "doctor-2", "segmented": False, "metrics": {"confidence": 0}},
+               "doctor_id": "doctor-2", "status": "pending", "metrics": {}},
     }
 
     def create(data):

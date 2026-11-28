@@ -43,6 +43,17 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const register = async (details) => {
+    try {
+      setError(null);
+      setDoctor(await authService.register(details));
+      return { success: true };
+    } catch (err) {
+      setError(err.message || 'Registration failed');
+      return { success: false, error: err.message };
+    }
+  };
+
   const logout = async () => {
     // The local session ends even when the server cannot be reached: otherwise a
     // network error would leave the doctor "logged in" with no way out.
@@ -60,6 +71,7 @@ export const AuthProvider = ({ children }) => {
     loading,
     error,
     login,
+    register,
     logout,
     isAuthenticated: !!doctor
   };

@@ -2,7 +2,8 @@ from flask import Blueprint, jsonify, request
 
 from app.core.errors import ValidationError
 from app.core.security import create_access_token, current_doctor_id, require_authentication
-from app.schemas.doctor import DoctorOut
+from app.schemas.doctor import DoctorOut, DoctorRegister
+from app.schemas.patient import validate_input
 from app.services.auth_service import auth_service
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
@@ -21,6 +22,18 @@ def login():
         "doctor": DoctorOut.from_db(doctor).to_json(),
         "token": create_access_token(doctor["id"]),
     }), 200
+
+
+@auth_bp.post("/register")
+def register():
+    data = validate_input(DoctorRegister, request.get_json(silent=True) or {})
+    doctor = auth_service.register(data)
+    # Signed in straight away, with the same response shape as login.
+    return jsonify({
+        "message": "Account created",
+        "doctor": DoctorOut.from_db(doctor).to_json(),
+        "token": create_access_token(doctor["id"]),
+    }), 201
 
 
 @auth_bp.post("/logout")

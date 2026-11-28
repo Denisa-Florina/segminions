@@ -36,25 +36,13 @@ class PatientCreate(BaseModel):
     doctor_id: str = Field(min_length=1)
 
 
-class PatientUpdate(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
-
-    name: str | None = Field(default=None, min_length=1, max_length=MAX_NAME_LENGTH)
-    age: int | None = Field(default=None, ge=MIN_AGE, le=MAX_AGE)
-
-
 # --- Output ----------------------------------------------------------------
 
 class SegmentationMetrics(BaseModel):
-    # Keys stay snake_case and unknown keys are kept: the frontend reads them as stored.
-    model_config = ConfigDict(extra="allow")
-
-    confidence: float = 0
+    # Keys stay snake_case: the frontend reads them as stored. Confidence and the
+    # simulated flag are sent at the top level of the patient, not repeated here.
     voxel_count: int | None = None
     volume_mm3: float | None = None
-    coverage: float | None = None
-    artery_detected: bool | None = None
-    simulated: bool = False
 
 
 class PatientSummary(BaseModel):
@@ -73,13 +61,10 @@ class PatientSummary(BaseModel):
     @classmethod
     def from_db(cls, patient: dict):
         metrics = patient.get("metrics") or {}
-        # Patients created before statuses were stored: derive it from `segmented`.
-        status = patient.get("status") or ("completed" if patient.get("segmented") else "pending")
         return cls.model_validate({
             **patient,
             "metrics": metrics,
-            "status": status,
-            "dicom_file": patient.get("filename") or patient.get("dicom_file") or "",
+            "dicom_file": patient.get("filename") or "",
             "confidence": metrics.get("confidence", 0),
             "simulated": bool(metrics.get("simulated")),
         })

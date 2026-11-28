@@ -29,7 +29,7 @@ def create_app(config_class: type[Config] | None = None) -> Flask:
         app,
         origins=app.config["CORS_ORIGINS"],
         allow_headers=["Content-Type", "Authorization"],
-        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        methods=["GET", "POST", "DELETE", "OPTIONS"],
     )
 
     if app.config["INIT_FIREBASE"]:

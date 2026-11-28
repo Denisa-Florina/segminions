@@ -21,8 +21,7 @@ logger = logging.getLogger(__name__)
 
 SCAN = "scan_data"
 MASK = "mask_data"
-LEGACY = "file_data"   # written by the first version of the app
-ALL_KEYS = (SCAN, MASK, LEGACY)
+ALL_KEYS = (SCAN, MASK)
 
 _PATIENTS = "patients"
 _INLINE_LIMIT_BYTES = 512 * 1024

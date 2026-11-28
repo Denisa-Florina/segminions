@@ -63,8 +63,7 @@ credentials or GPU.
 - **Authorization:** the doctor is identified only from the token. Each patient operation
   checks ownership; another doctor's patient is answered with `404`, so its existence is
   not revealed.
-- **Passwords** are hashed with bcrypt. Legacy unsalted SHA-256 hashes are verified once
-  and upgraded to bcrypt on the next successful login.
+- **Passwords** are hashed with bcrypt.
 - Login returns the same error for an unknown email and a wrong password.
 
 ## Inference pipeline
@@ -114,8 +113,7 @@ A new upload or re-segment is refused with `409` while one is processing.
 | GET | `/api/patients` | List the authenticated doctor's patients |
 | POST | `/api/patients/` | Create a patient (multipart, optional `dicom_file`s; segmentation starts in the background) |
 | GET | `/api/patients/<id>` | Patient details and metrics |
-| PUT | `/api/patients/<id>` | Update name / age |
-| DELETE | `/api/patients/<id>` | Delete a patient |
+| DELETE | `/api/patients/<id>` | Delete a patient and its files (`204`; `409` while processing) |
 | POST | `/api/patients/<id>/upload-dicom` | Upload a scan, start segmentation (`202`) |
 | POST | `/api/patients/<id>/re-segment` | Re-run segmentation on the stored scan (`202`) |
 | GET | `/api/patients/<id>/download/scan` | Download the scan (`.nii.gz`) |

@@ -1,14 +1,13 @@
 """Doctor authentication."""
 
-import logging
-
-from app.core.errors import AuthenticationError, NotFoundError
-from app.core.security import hash_password, is_legacy_hash, verify_password
+from app.core.clock import utc_now
+from app.core.errors import AuthenticationError, ConflictError, NotFoundError
+from app.core.security import hash_password, verify_password
 from app.repositories.doctor_repository import DoctorRepository
-
-logger = logging.getLogger(__name__)
+from app.schemas.doctor import DoctorRegister
 
 INVALID_CREDENTIALS = "Invalid email or password"
+EMAIL_TAKEN = "An account with this email already exists"
 
 # Checked when the email is unknown, so both failure cases take the same time.
 _DUMMY_HASH = hash_password("dummy-password")
@@ -28,34 +27,31 @@ class AuthService:
         self.doctors = doctors
 
     def authenticate(self, email: str, password: str) -> dict:
-        normalized = normalize_email(email)
-        doctor = self._find_by_email(email, normalized)
+        doctor = self.doctors.get_by_email(normalize_email(email))
         if not doctor:
             verify_password(password, _DUMMY_HASH)
             raise AuthenticationError(INVALID_CREDENTIALS)
 
-        stored_hash = doctor.get("password")
-        if not verify_password(password, stored_hash):
+        if not verify_password(password, doctor.get("password")):
             raise AuthenticationError(INVALID_CREDENTIALS)
-
-        if is_legacy_hash(stored_hash):
-            self.doctors.update_password_hash(doctor["id"], hash_password(password))
-            logger.info("Upgraded password hash to bcrypt for doctor %s", doctor["id"])
-        if doctor.get("email") != normalized:
-            self.doctors.update_email(doctor["id"], normalized)
-            logger.info("Normalised the stored email of doctor %s", doctor["id"])
-            doctor = {**doctor, "email": normalized}
-
         return _without_password(doctor)
 
-    def _find_by_email(self, typed: str, normalized: str) -> dict | None:
-        """Look up the normalised email. Accounts created before normalisation may be
-        stored with capitals: they are found by the address exactly as typed, and their
-        stored email is normalised on that first login."""
-        doctor = self.doctors.get_by_email(normalized)
-        if doctor is None and typed.strip() != normalized:
-            doctor = self.doctors.get_by_email(typed.strip())
-        return doctor
+    def register(self, data: DoctorRegister) -> dict:
+        """Create a doctor account. The email is already normalised by DoctorRegister.
+
+        Known limitation: Firestore has no unique constraint, so two registrations with
+        the same email at the same instant could both pass the check below. Closing that
+        gap needs a document keyed by the email, created atomically.
+        """
+        if self.doctors.get_by_email(data.email):
+            raise ConflictError(EMAIL_TAKEN)
+
+        doctor = self.doctors.create({
+            **data.model_dump(exclude={"password"}),
+            "password": hash_password(data.password),
+            "created_at": utc_now(),
+        })
+        return _without_password(doctor)
 
     def get_doctor(self, doctor_id: str) -> dict:
         doctor = self.doctors.get_by_id(doctor_id)

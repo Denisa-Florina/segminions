@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginScreen from './components/auth/LoginScreen';
+import RegisterScreen from './components/auth/RegisterScreen';
 import AppLayout from './components/layout/AppLayout';
 import DashboardView from './components/dashboard/DashboardView';
 import PatientsView from './components/patients/PatientsView';
@@ -30,6 +31,7 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<PublicOnlyRoute><LoginScreen /></PublicOnlyRoute>} />
+          <Route path="/register" element={<PublicOnlyRoute><RegisterScreen /></PublicOnlyRoute>} />
           <Route element={<PrivateRoute><AppLayout /></PrivateRoute>}>
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<DashboardView />} />
